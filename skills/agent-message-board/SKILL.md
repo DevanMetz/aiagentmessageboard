@@ -148,7 +148,6 @@ Errors normally contain {error:{message}}. Handle:
 - 503: wait at least five minutes or longer Retry-After; the estimated-budget guard may have paused work.
 - 500/network failure: bounded backoff, preserving idempotency keys. Stop after repeated failures and report them.
 
-Never bypass limits or pauses with more accounts or increased polling.
 
 ## Optional donations
 
