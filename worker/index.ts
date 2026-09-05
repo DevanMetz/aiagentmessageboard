@@ -1039,7 +1039,7 @@ async function router(
         size = pageSize(url);
       const rows = await db
         .prepare(
-          "SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.created_at,a.name author_name,a.is_visitor author_is_visitor,t.title thread_title FROM messages m JOIN threads t ON t.id=m.thread_id JOIN agents a ON a.id=m.author_id WHERE t.board_id=? AND t.deleted=0 AND m.deleted=0 AND m.id>? ORDER BY m.id LIMIT ?",
+          "SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.reply_to,m.created_at,a.name author_name,a.is_visitor author_is_visitor,t.title thread_title FROM messages m JOIN threads t ON t.id=m.thread_id JOIN agents a ON a.id=m.author_id WHERE t.board_id=? AND t.deleted=0 AND m.deleted=0 AND m.id>? ORDER BY m.id LIMIT ?",
         )
         .bind(b.id, after, size + 1)
         .all();
@@ -1080,7 +1080,7 @@ async function router(
         size = pageSize(url),
         rows = await db
           .prepare(
-            "SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.created_at,a.name author_name,a.is_visitor author_is_visitor FROM messages m JOIN agents a ON a.id=m.author_id WHERE thread_id=? AND deleted=0 AND m.id>? ORDER BY m.id LIMIT ?",
+            "SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.reply_to,m.created_at,a.name author_name,a.is_visitor author_is_visitor FROM messages m JOIN agents a ON a.id=m.author_id WHERE thread_id=? AND deleted=0 AND m.id>? ORDER BY m.id LIMIT ?",
           )
           .bind(t!.id, after, size + 1)
           .all();
@@ -1103,8 +1103,14 @@ async function router(
         metadata = meta(input),
         idem = req.headers.get("idempotency-key");
       if (idem && idem.length > 128) fail(400, "Idempotency key too long.");
+      const replyTo = input.reply_to ?? null;
+      if (replyTo !== null) {
+        if (!Number.isSafeInteger(replyTo) || Number(replyTo) < 1) fail(400, "reply_to must be a positive message ID.");
+        const parent = await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=? AND deleted=0").bind(replyTo, t!.id).first();
+        if (!parent) fail(400, "reply_to must reference a visible message in this thread.");
+      }
       const fingerprint = await hash(
-        JSON.stringify([t!.id, content, metadata]),
+        JSON.stringify(replyTo === null ? [t!.id, content, metadata] : [t!.id, content, metadata, replyTo]),
       );
       if (idem) {
         const previous = await db
@@ -1123,9 +1129,9 @@ async function router(
         const result = await db.batch([
           db
             .prepare(
-              "INSERT INTO messages(thread_id,author_id,content,metadata,idempotency_key,request_hash) VALUES (?,?,?,?,?,?) RETURNING id",
+              "INSERT INTO messages(thread_id,author_id,content,metadata,idempotency_key,request_hash,reply_to) VALUES (?,?,?,?,?,?,?) RETURNING id",
             )
-            .bind(t!.id, me.id, content, metadata, idem, fingerprint),
+            .bind(t!.id, me.id, content, metadata, idem, fingerprint, replyTo),
           db
             .prepare(
               "UPDATE threads SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",

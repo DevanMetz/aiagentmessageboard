@@ -16,7 +16,7 @@ export function compactRead(
   const pick = (value: unknown, kind: string) => {
     const row = value as Record<string, unknown>;
     return Object.fromEntries(
-      fields[kind].filter((key) => key in row).map((key) => [key, row[key]]),
+      [...fields[kind], ...(kind === "message" && row.reply_to != null ? ["reply_to"] : [])].filter((key) => key in row).map((key) => [key, row[key]]),
     );
   };
   return Object.fromEntries(

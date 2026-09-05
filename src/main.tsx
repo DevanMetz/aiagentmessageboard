@@ -60,6 +60,7 @@ type Thread = {
   preview: string;
 };
 type Message = {
+  reply_to: number | null;
   id: number;
   author_id: string;
   author_name: string;
@@ -212,6 +213,7 @@ function App() {
     [nextOffset, setNextOffset] = useState<number | null>(null),
     [cursor, setCursor] = useState(0),
     [selectedMessage, setSelectedMessage] = useState(0),
+    [replyTo, setReplyTo] = useState<number | null>(null),
     [hasMore, setHasMore] = useState(false),
     [canModerate, setCanModerate] = useState(false),
     [secret, setSecret] = useState(""),
@@ -227,6 +229,7 @@ function App() {
   function navigate(to: string) {
     if (location.pathname !== to) history.pushState({}, "", to);
     setPath(to);
+    setReplyTo(null);
     setThreadQuery("");
     setThreadDraft("");
     setQuery("");
@@ -285,7 +288,7 @@ function App() {
           messages: Message[];
           next_cursor: number;
           has_more: boolean;
-        }>(`/threads/${encodeURIComponent(path.slice(3))}`);
+        }>(`/threads/${encodeURIComponent(path.slice(3))}?after=${encodeURIComponent(new URLSearchParams(location.search).get("after") || "0")}`);
         if (current !== version.current) return;
         setBoard(r.board);
         setThread(r.thread);
@@ -991,7 +994,7 @@ function App() {
                       </div>
                       <div className="messages">
                         {messages.map((m) => (
-                          <article className="message" key={m.id}>
+                          <article className="message" key={m.id} id={`message-${m.id}`}>
                             <Avatar name={m.author_name} />
                             <div className="message-body">
                               <header>
@@ -1015,7 +1018,13 @@ function App() {
                                   </button>
                                 )}
                               </header>
+                              {m.reply_to && <a href={`/t/${thread.id}?after=${m.reply_to - 1}#message-${m.reply_to}`}>In reply to message #{m.reply_to}</a>}
                               <p>{m.content}</p>
+                              <a href={`/t/${thread.id}?after=${m.id - 1}#message-${m.id}`}>#{m.id}</a>
+                              {agent && <button className="secondary" onClick={() => {
+                                setReplyTo(m.id);
+                                document.getElementById("reply")?.focus();
+                              }}>Reply</button>}
                               {m.metadata && (
                                 <details>
                                   <summary>Structured metadata</summary>
@@ -1028,7 +1037,7 @@ function App() {
                           </article>
                         ))}
                       </div>
-                      {!hasMore && (
+                      {(
                         <div className="reply-box">
                           {agent ? (
                             <form
@@ -1039,14 +1048,16 @@ function App() {
                                   await api(
                                     `/threads/${thread.id}/messages`,
                                     "POST",
-                                    { content: d.content },
+                                    { content: d.content, ...(replyTo ? { reply_to: replyTo } : {}) },
                                   );
                                   f.reset();
+                                  setReplyTo(null);
                                   setRefresh((r) => r + 1);
                                   setNotice("Reply posted.");
                                 });
                               }}
                             >
+                              {replyTo && <p>Replying to message #{replyTo} <button type="button" onClick={() => setReplyTo(null)}>Cancel</button></p>}
                               <label htmlFor="reply">
                                 Continue the conversation{" "}
                                 <span>as {agent.name}</span>
@@ -1981,7 +1992,7 @@ function Docs({
             [
               "POST",
               "/v1/threads/{id}/messages",
-              "Reply with {content, metadata?}.",
+              "Reply with {content, metadata?, reply_to?}. reply_to is a message ID in the same thread.",
             ],
             [
               "PATCH",

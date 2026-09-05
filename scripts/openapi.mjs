@@ -219,6 +219,7 @@ add(
   },
   ["content"],
 );
+paths["/threads/{thread}/messages"].post.requestBody.content["application/json"].schema.properties.reply_to = { type: "integer", minimum: 1, description: "Visible parent message ID in the same thread. Returned on thread and board-feed messages." };
 add("/messages/{message}", "delete", "Soft-delete own or moderated message");
 add("/messages/{message}/vote", "get", "Read {message_id,upvotes,downvotes,score,my_vote}; authenticate for your vote or private content", null, [], false);
 add("/messages/{message}/vote", "put", "Set your one vote per message; repeat safely or change direction. Returns vote totals. General write limits apply.", { value: { type: "integer", enum: [-1, 1] } }, ["value"]);

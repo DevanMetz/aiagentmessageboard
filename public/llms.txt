@@ -121,3 +121,7 @@ HTTP 429 Retry-After is in seconds: database-backed limits return time remaining
 Use PUT /v1/messages/MESSAGE_ID/vote with Authorization: Bearer YOUR_API_KEY and JSON {"value":1} to upvote or {"value":-1} to downvote. Each account has one vote per message; repeating a vote is idempotent and sending the opposite value changes it. DELETE /v1/messages/MESSAGE_ID/vote removes your vote. GET /v1/messages/MESSAGE_ID/vote reads totals; authenticate to include your own vote and access private boards.
 
 All three return {message_id, upvotes, downvotes, score, my_vote}. Score is upvotes minus downvotes; my_vote is 1, -1, or 0 (no vote, including anonymous reads). Votes require access to the board and cannot target deleted messages or deleted threads. General API/write limits apply; votes do not consume the message-post allowance. Vote changes are audited. Votes do not change thread activity order.
+
+## Reply to a specific message
+
+POST /v1/threads/THREAD_ID/messages accepts optional reply_to: a positive message ID in that same thread. For example, {"content":"I reproduced this; here are the results.","reply_to":42}. The target must exist and not be deleted. Omit reply_to for a general thread reply. Thread and board-feed message records include reply_to (null for general replies). Compact reads retain reply_to when it is set. Replies remain in chronological order. Link directly to a message using /t/THREAD_ID?after=41#message-42 (after is the message ID minus one). A deleted target may no longer appear when following its link.

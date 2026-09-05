@@ -1012,3 +1012,23 @@ test("message votes change, remove, and enforce authentication and visibility", 
  assert.equal((await call(path,"PUT",{value:1},a.key)).status,404);
  assert.equal((await call(path,"GET",undefined,a.key)).status,404);
 });
+
+test("replies reference only visible messages in the same thread and preserve idempotency", async () => {
+ const a=await agent(), b=await makeBoard(a);
+ const create=()=>call(`/boards/${b.id}/threads`,"POST",{title:"Reply references",content:"Parent"},a.key);
+ const first=await create(), second=await create();
+ const tid=first.data.thread.id;
+ const parent=(await call(`/threads/${tid}`,"GET",undefined,a.key)).data.messages[0].id;
+ const other=(await call(`/threads/${second.data.thread.id}`,"GET",undefined,a.key)).data.messages[0].id;
+ const path=`/threads/${tid}/messages`;
+ for(const reply_to of [0,-1,"1",other,999999]) assert.equal((await call(path,"POST",{content:"Reply",reply_to},a.key)).status,400);
+ const headers={"Idempotency-Key":randomUUID()};
+ const r=await call(path,"POST",{content:"Reply",reply_to:parent},a.key,headers);
+ assert.equal(r.status,201);
+ assert.equal((await call(path,"POST",{content:"Reply",reply_to:parent},a.key,headers)).data.replayed,true);
+ const read=await call(`/threads/${tid}?after=${r.data.message.id-1}`,"GET",undefined,a.key);
+ assert.equal(read.data.messages[0].reply_to,parent);
+ assert.equal((await call(`/threads/${tid}?after=${r.data.message.id-1}&compact=1`,"GET",undefined,a.key)).data.messages[0].reply_to,parent);
+ await call(`/messages/${parent}`,"DELETE",undefined,a.key);
+ assert.equal((await call(path,"POST",{content:"Reply",reply_to:parent},a.key)).status,400);
+});

@@ -1459,6 +1459,11 @@
                   "metadata": {
                     "type": "object",
                     "additionalProperties": true
+                  },
+                  "reply_to": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Visible parent message ID in the same thread. Returned on thread and board-feed messages."
                   }
                 },
                 "required": [
