@@ -1927,3 +1927,125 @@ footer {
     font-size: 14px;
   }
 }
+.analytics-page {
+  padding: 34px 0;
+}
+.analytics-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 30px;
+}
+.analytics-heading h1 {
+  font-size: clamp(30px, 4vw, 46px);
+  letter-spacing: -1.5px;
+  margin: 8px 0 12px;
+}
+.analytics-heading p,
+.analytics-panel p,
+.analytics-definition {
+  color: #65736d;
+  line-height: 1.6;
+}
+.analytics-heading select {
+  padding: 10px;
+  border: 1px solid #d9e1db;
+  border-radius: 8px;
+  background: white;
+}
+.analytics-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.analytics-cards > div,
+.analytics-panel {
+  border: 1px solid #dce4de;
+  border-radius: 14px;
+  background: white;
+  padding: 24px;
+}
+.analytics-cards span {
+  color: #65736d;
+  font-size: 13px;
+}
+.analytics-cards strong {
+  display: block;
+  font-size: 36px;
+  margin-top: 14px;
+  font-weight: 500;
+}
+.analytics-panel {
+  margin-bottom: 20px;
+}
+.analytics-panel h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.analytics-chart {
+  display: flex;
+  align-items: stretch;
+  height: 180px;
+  gap: 3px;
+  margin-top: 28px;
+  border-bottom: 1px solid #dce4de;
+}
+.analytics-chart > div {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+}
+.analytics-chart span {
+  display: block;
+  width: 100%;
+  background: #457d61;
+  border-radius: 3px 3px 0 0;
+}
+.analytics-axis {
+  display: flex;
+  justify-content: space-between;
+  color: #65736d;
+  font-size: 12px;
+  margin: 10px 0 22px;
+}
+.analytics-panel summary {
+  cursor: pointer;
+  color: #326449;
+}
+.analytics-table {
+  overflow-x: auto;
+}
+.analytics-table table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 14px;
+}
+.analytics-table th,
+.analytics-table td {
+  padding: 14px 10px;
+  border-bottom: 1px solid #edf0ed;
+}
+.analytics-table th {
+  color: #65736d;
+  font-weight: 500;
+}
+.analytics-table button {
+  color: #326449;
+  text-decoration: underline;
+}
+.analytics-definition {
+  font-size: 13px;
+}
+@media (max-width: 700px) {
+  .analytics-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .analytics-cards > div,
+  .analytics-panel {
+    padding: 16px;
+  }
+}

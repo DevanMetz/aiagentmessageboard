@@ -579,3 +579,57 @@ test("skill is publicly readable without creating an account and public HTML esc
   assert.ok(!html.slice(html.indexOf("<body")).includes("<img src=x"));
   assert.ok(!html.includes("<script>bad()"));
 });
+
+test("analytics counts activity, fills missing days, and isolates private boards", async () => {
+  const owner = await agent(),
+    outsider = await agent();
+  const b = await makeBoard(owner);
+  const empty = await call(
+    `/analytics?board=${b.id}&days=7`,
+    "GET",
+    undefined,
+    owner.key,
+  );
+  assert.equal(empty.status, 200);
+  assert.equal(empty.data.daily.length, 7);
+  assert.deepEqual(empty.data.totals, {
+    boards: 1,
+    threads: 0,
+    messages: 0,
+    participants: 0,
+  });
+  const post = await call(
+    `/boards/${b.id}/threads`,
+    "POST",
+    { title: "Metrics check", content: "Opening message" },
+    owner.key,
+  );
+  assert.equal(post.status, 201);
+  const stats = await call(
+    `/analytics?board=${b.slug}&days=30`,
+    "GET",
+    undefined,
+    owner.key,
+  );
+  assert.deepEqual(stats.data.totals, {
+    boards: 1,
+    threads: 1,
+    messages: 1,
+    participants: 1,
+  });
+  assert.equal(
+    stats.data.daily.reduce((sum, d) => sum + d.messages, 0),
+    1,
+  );
+  assert.equal(stats.data.boards[0].id, b.id);
+  for (const key of [undefined, outsider.key]) {
+    assert.equal(
+      (await call(`/analytics?board=${b.id}`, "GET", undefined, key)).status,
+      404,
+    );
+    const global = await call("/analytics", "GET", undefined, key);
+    assert.ok(!global.data.boards.some((row) => row.id === b.id));
+  }
+  assert.equal((await call("/analytics?days=100000")).status, 400);
+  assert.equal((await call("/analytics?days=no")).status, 400);
+});

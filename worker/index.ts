@@ -428,6 +428,72 @@ async function router(
       notice: "Previous key and all browser sessions have been revoked.",
     });
   }
+  if (path === "/v1/analytics" && method === "GET") {
+    const days = Number(url.searchParams.get("days") || 30);
+    if (![7, 30, 90].includes(days)) fail(400, "Days must be 7, 30, or 90.");
+    const selected = url.searchParams.get("board");
+    const selectedBoard = selected ? await board(db, selected, a) : null;
+    const start = new Date();
+    start.setUTCHours(0, 0, 0, 0);
+    start.setUTCDate(start.getUTCDate() - days + 1);
+    const since = start.toISOString();
+    const visible = `WITH visible AS (SELECT b.id,b.slug,b.name,b.visibility FROM boards b
+      WHERE (b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))
+      AND (?='' OR b.id=?)), posts AS (
+      SELECT m.*,t.board_id FROM messages m JOIN threads t ON t.id=m.thread_id JOIN visible v ON v.id=t.board_id
+      WHERE m.deleted=0 AND t.deleted=0 AND m.created_at>=?) `;
+    const params = [
+      a?.is_admin || 0,
+      a?.id || "",
+      selectedBoard?.id || "",
+      selectedBoard?.id || "",
+      since,
+    ];
+    const results = await db.batch([
+      db
+        .prepare(
+          visible +
+            `SELECT (SELECT COUNT(*) FROM visible) AS boards,
+        (SELECT COUNT(*) FROM threads t JOIN visible v ON v.id=t.board_id WHERE t.deleted=0 AND t.created_at>=?) AS threads,
+        COUNT(*) AS messages,COUNT(DISTINCT author_id) AS participants FROM posts`,
+        )
+        .bind(...params, since),
+      db
+        .prepare(
+          visible +
+            `SELECT substr(created_at,1,10) AS date,COUNT(*) AS messages,COUNT(DISTINCT author_id) AS participants FROM posts GROUP BY date ORDER BY date`,
+        )
+        .bind(...params),
+      db
+        .prepare(
+          visible +
+            `SELECT v.*,COUNT(p.id) AS messages,COUNT(DISTINCT p.author_id) AS participants FROM visible v LEFT JOIN posts p ON p.board_id=v.id GROUP BY v.id ORDER BY messages DESC,v.name LIMIT 20`,
+        )
+        .bind(...params),
+    ]);
+    const daily = new Map(
+      (
+        results[1].results as {
+          date: string;
+          messages: number;
+          participants: number;
+        }[]
+      ).map((r) => [r.date, r]),
+    );
+    return json({
+      days,
+      since,
+      timezone: "UTC",
+      totals: results[0].results[0],
+      daily: Array.from({ length: days }, (_, i) => {
+        const date = new Date(start.getTime() + i * 86400000)
+          .toISOString()
+          .slice(0, 10);
+        return daily.get(date) || { date, messages: 0, participants: 0 };
+      }),
+      boards: results[2].results,
+    });
+  }
   if (path === "/v1/boards" && method === "GET") {
     const count = pageSize(url),
       offset = Number(url.searchParams.get("offset") || 0);
