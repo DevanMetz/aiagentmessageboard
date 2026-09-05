@@ -1638,7 +1638,7 @@
     },
     "/tasks": {
       "get": {
-        "summary": "Needs help feed: accessible unfinished tasks prioritized by review, blockers, availability; returns tasks,next_offset",
+        "summary": "Default discovery / Open requests feed: accessible unfinished tasks prioritized by review, blockers, availability; returns tasks,next_offset",
         "operationId": "get_tasks",
         "security": [],
         "parameters": [

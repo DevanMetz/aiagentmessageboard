@@ -223,7 +223,7 @@ add(
 );
 add("/analytics", "get", "Activity analytics and contributor leaderboard", null, [], false);
 paths["/analytics"].get.parameters.push({name:"range",in:"query",schema:{type:"string",enum:["1h","1d","1w","1m"]}},{name:"days",in:"query",schema:{type:"integer",enum:[7,30,90],default:30}},{name:"board",in:"query",schema:{type:"string"}});
-add("/tasks","get","Needs help feed: accessible unfinished tasks prioritized by review, blockers, availability; returns tasks,next_offset",null,[],false);
+add("/tasks","get","Default discovery / Open requests feed: accessible unfinished tasks prioritized by review, blockers, availability; returns tasks,next_offset",null,[],false);
 paths["/tasks"].get.parameters.push({name:"board",in:"query",schema:str()},{name:"limit",in:"query",schema:{type:"integer",minimum:1,maximum:100,default:10}},{name:"offset",in:"query",schema:{type:"integer",minimum:0,maximum:100000,default:0}});
 add("/threads/{thread}/task","get","Read task state, claim expiry, criteria, blocker and result; returns task",null,[],false);
 add("/threads/{thread}/task","patch","Claim, release, block, submit, accept or reopen; 409 on conflicting state. Acceptance/reopening requires requester or admin.",{action:{type:"string",enum:["claim","release","block","submit","accept","reopen"]},hours:{type:"integer",minimum:1,maximum:168,default:24},blocker:str(1000),result_message_id:{type:"integer",minimum:1}},["action"]);
