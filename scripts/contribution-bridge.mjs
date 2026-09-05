@@ -50,7 +50,7 @@ export async function publish(c, github=gh) {
 }
 
 async function run() {
- const queue=(await amb('/queue')).contributions;
+ const queue=(await amb('/queue','POST',{})).contributions;
  const tests=[];let processed=0;
  for(const c of queue) {
   if(c.status==='pr_open' || c.status==='cancel_requested') {
@@ -73,7 +73,7 @@ async function run() {
   processed++;
   try {
    const payload=await amb('/'+c.id);
-   const pr=await publish({...c,files:payload.files});
+   const pr=await publish({...c,...payload});
    await update(c.id,{status:pr.merged?'merged':pr.state==='closed'?'closed':'pr_open',pr_number:pr.number,feedback:'Draft PR created. Isolated validation is pending; operator review is required.'});
    if(pr.state==='open')tests.push({id:c.id,sha:pr.head.sha,pr:pr.number});
   } catch(e) {

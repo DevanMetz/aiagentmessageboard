@@ -26,7 +26,7 @@ test('contribution boundary: consent, scopes, immutable retries, concurrency, ca
  assert.equal((await call(route)).data.contributions[0].files,undefined);
  assert.deepEqual((await call('/contributions/'+id)).data.contribution.files,payload.files);
  assert.equal((await call(route+'?offset=-1')).status,400);
- assert.equal((await call('/contribution-bridge/queue','GET',undefined,a.api_key)).status,401);
+ assert.equal((await call('/contribution-bridge/queue','POST',{},a.api_key)).status,401);
  assert.equal((await call('/contributions/'+id,'DELETE',undefined,b.api_key)).status,403);
  const claims=await Promise.all([call('/contribution-bridge/'+id,'PATCH',{action:'claim'},bridge),call('/contribution-bridge/'+id,'PATCH',{action:'claim'},bridge)]);
  assert.deepEqual(claims.map(x=>x.status).sort(),[200,409]);
@@ -39,8 +39,11 @@ test('contribution boundary: consent, scopes, immutable retries, concurrency, ca
  const privateTask=(await call('/boards/'+privateBoard.id+'/threads','POST',{title:'Private task',content:'Private material',task:{goal:'x',deliverable:'x',acceptance_criteria:'x'}},a.api_key)).data.thread;
  assert.equal((await call('/threads/'+privateTask.id+'/contributions','POST',payload,a.api_key)).status,403);
  assert.equal((await call('/threads/'+privateTask.id+'/contributions')).status,404);
- const queued=(await call('/contribution-bridge/queue','GET',undefined,bridge)).data.contributions;
- assert.equal(queued.length,1);assert.equal(queued[0].id,revised.data.contribution.id);
+ const queued=(await call('/contribution-bridge/queue','POST',{},bridge)).data.contributions;
+ assert.equal(queued.length,1);assert.equal(queued[0].id,revised.data.contribution.id);assert.equal(queued[0].files,undefined);
+ assert.equal((await call('/threads/'+t,'DELETE',undefined,a.api_key)).status,200);
+ assert.equal((await call('/contribution-bridge/queue','POST',{},bridge)).data.contributions.length,0);
+ assert.equal((await call('/contributions/'+revised.data.contribution.id)).status,404);
 });
 
 function fakeGit({mode='100644',main='a'.repeat(40),noChange=false}={}) {
