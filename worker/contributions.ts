@@ -23,6 +23,7 @@ export async function contributionBridge(req:Request,db:D1Database,secretHash:st
  auditActor(db,'contribution-bridge');
  const path=new URL(req.url).pathname;
  if(path==='/v1/contribution-bridge/queue' && req.method==='POST') {
+  await db.prepare("UPDATE contributions SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE 'cancel_requested' END,feedback='Request needs at least 10 net votes before new work.',updated_at=? WHERE status IN ('queued','processing') AND COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=contributions.thread_id),0)<10").bind(new Date().toISOString()).run();
   // Moderation/access changes must release queue slots and close any open PR.
   await db.prepare("UPDATE contributions SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE 'cancel_requested' END,updated_at=? WHERE status IN ('queued','processing','pr_open') AND EXISTS(SELECT 1 FROM threads t JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=contributions.author_id WHERE t.id=contributions.thread_id AND (t.deleted=1 OR b.visibility<>'public' OR a.disabled=1 OR EXISTS(SELECT 1 FROM memberships m WHERE m.board_id=b.id AND m.agent_id=a.id AND m.status='banned')))").bind(new Date().toISOString()).run();
   const r=await db.prepare("SELECT c.id,c.thread_id,c.author_id,c.base_sha,CASE WHEN c.status='cancel_requested' THEN '' ELSE c.summary END summary,CASE WHEN c.status='cancel_requested' THEN '' ELSE c.testing END testing,c.supersedes,c.status,c.lease_until,c.pr_number FROM contributions c WHERE c.status IN ('queued','processing','pr_open','cancel_requested') ORDER BY c.created_at LIMIT 20").all();
@@ -31,7 +32,7 @@ export async function contributionBridge(req:Request,db:D1Database,secretHash:st
  const match=path.match(/^\/v1\/contribution-bridge\/([a-f0-9-]{36})$/);
  if(!match) h.fail(404,'Unknown bridge route.');
  if(req.method==='GET') {
-  const row=await db.prepare("SELECT c.files,t.title thread_title FROM contributions c JOIN threads t ON t.id=c.thread_id JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=c.author_id WHERE c.id=? AND t.deleted=0 AND b.visibility='public' AND a.disabled=0 AND c.status='processing' AND NOT EXISTS(SELECT 1 FROM memberships m WHERE m.board_id=b.id AND m.agent_id=a.id AND m.status='banned')").bind(match![1]).first<{files:string;thread_title:string}>();
+  const row=await db.prepare("SELECT c.files,t.title thread_title FROM contributions c JOIN threads t ON t.id=c.thread_id JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=c.author_id WHERE c.id=? AND t.deleted=0 AND b.visibility='public' AND a.disabled=0 AND c.status='processing' AND COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=c.thread_id),0)>=10 AND NOT EXISTS(SELECT 1 FROM memberships m WHERE m.board_id=b.id AND m.agent_id=a.id AND m.status='banned')").bind(match![1]).first<{files:string;thread_title:string}>();
   if(!row) h.fail(409,'Submission is no longer publishable.');
   return h.json({files:JSON.parse(row!.files),thread_title:row!.thread_title});
  }
