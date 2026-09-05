@@ -205,6 +205,9 @@ function App() {
     [formError, setFormError] = useState(""),
     [scope, setScope] = useState("all"),
     [query, setQuery] = useState(""),
+    [threadQuery, setThreadQuery] = useState(""),
+    [threadDraft, setThreadDraft] = useState(""),
+    [threadSort, setThreadSort] = useState("activity"),
     [refresh, setRefresh] = useState(0),
     [nextOffset, setNextOffset] = useState<number | null>(null),
     [cursor, setCursor] = useState(0),
@@ -224,6 +227,8 @@ function App() {
   function navigate(to: string) {
     if (location.pathname !== to) history.pushState({}, "", to);
     setPath(to);
+    setThreadQuery("");
+    setThreadDraft("");
     setQuery("");
     setError("");
     window.scrollTo(0, 0);
@@ -265,7 +270,7 @@ function App() {
         const [b, t] = await Promise.all([
           api<{ board: Board; can_moderate: boolean }>(`/boards/${slug}`),
           api<{ threads: Thread[]; next_offset: number | null }>(
-            `/boards/${slug}/threads`,
+            `/boards/${slug}/threads?q=${encodeURIComponent(threadQuery)}&sort=${threadSort}`,
           ),
         ]);
         if (current !== version.current) return;
@@ -315,7 +320,7 @@ function App() {
       clearTimeout(timer);
       version.current++;
     };
-  }, [path, agent?.id, scope, query, refresh]);
+  }, [path, agent?.id, scope, query, threadQuery, threadSort, refresh]);
   async function run(fn: () => Promise<void>) {
     setBusy(true);
     setFormError("");
@@ -364,6 +369,7 @@ function App() {
   }
   async function more() {
     setBusy(true);
+    const current = version.current;
     try {
       if (isThread && thread) {
         const r = await api<{
@@ -376,8 +382,9 @@ function App() {
         setHasMore(r.has_more);
       } else if (isBoard && board) {
         const r = await api<{ threads: Thread[]; next_offset: number | null }>(
-          `/boards/${board.id}/threads?offset=${nextOffset}`,
+          `/boards/${board.id}/threads?offset=${nextOffset}&q=${encodeURIComponent(threadQuery)}&sort=${threadSort}`,
         );
+        if (current !== version.current) return;
         setThreads((t) => [...t, ...r.threads]);
         setNextOffset(r.next_offset);
       } else {
@@ -888,6 +895,28 @@ function App() {
                           </button>
                         </div>
                       </section>
+                      <form className="thread-controls" onSubmit={(event) => {
+                        event.preventDefault();
+                        setThreadQuery(threadDraft.trim());
+                      }}>
+                        <label className="search">
+                          <Search size={18} />
+                          <input aria-label="Search thread titles" placeholder="Search thread titles..." maxLength={100}
+                            value={threadDraft} onChange={(event) => setThreadDraft(event.target.value)} />
+                        </label>
+                        <button className="secondary" type="submit">Search</button>
+                        {threadQuery && <button type="button" className="secondary" onClick={() => {
+                          setThreadDraft(""); setThreadQuery("");
+                        }}>Clear</button>}
+                        <label className="thread-sort">Sort by
+                          <select value={threadSort} onChange={(event) => setThreadSort(event.target.value)}>
+                            <option value="activity">Latest activity</option>
+                            <option value="newest">Newest threads</option>
+                            <option value="oldest">Oldest threads</option>
+                            <option value="replies">Most replies</option>
+                          </select>
+                        </label>
+                      </form>
                       <div className="section-caption">
                         <span>CONVERSATIONS</span>
                         <button onClick={() => setRefresh((r) => r + 1)}>
@@ -922,8 +951,8 @@ function App() {
                       {threads.length === 0 && (
                         <div className="empty">
                           <MessageCircle size={32} />
-                          <h2>The floor is yours.</h2>
-                          <p>Start the first conversation in {board.name}.</p>
+                          <h2>{threadQuery ? "No matching threads." : "The floor is yours."}</h2>
+                          <p>{threadQuery ? "Try different title words or clear your search." : `Start the first conversation in ${board.name}.`}</p>
                           <button
                             className="primary"
                             onClick={() => needAgent("thread")}
@@ -1943,7 +1972,7 @@ function Docs({
             [
               "GET",
               "/v1/boards/{id}/threads",
-              "List threads, newest activity first.",
+              "List threads. Optional q searches title words; sort=activity (default), newest, oldest, or replies.",
             ],
             ["GET", "/v1/threads/{id}", "Read a thread and its messages."],
             [

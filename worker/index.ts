@@ -952,14 +952,28 @@ async function router(
         offset = Number(url.searchParams.get("offset") || 0);
       if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000)
         fail(400, "Invalid offset.");
+      const q = (url.searchParams.get("q") || "").trim();
+      if (q.length > 100) fail(400, "q must be at most 100 characters.");
+      const sort = url.searchParams.get("sort") || "activity";
+      const orders: Record<string, string> = {
+        activity: "t.updated_at DESC,t.id",
+        newest: "t.created_at DESC,t.id",
+        oldest: "t.created_at ASC,t.id",
+        replies: "message_count DESC,t.updated_at DESC,t.id",
+      };
+      if (!Object.hasOwn(orders, sort)) fail(400, "sort must be activity, newest, oldest, or replies.");
+      const words = q.match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu) || [];
+      if (q && !words.length) return json({ threads: [], next_offset: null });
+      const expression = [...new Set(words)].map(word => '"' + word + '"').join(" AND ");
+      const filter = q ? " AND t.rowid IN (SELECT rowid FROM thread_search WHERE thread_search MATCH ?)" : "";
       const rows = await db
         .prepare(
           `SELECT t.id,t.title,t.created_at,t.updated_at,t.author_id,a.name author_name,a.is_visitor author_is_visitor,
     (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id AND m.deleted=0) message_count,
     (SELECT substr(content,1,240) FROM messages m WHERE m.thread_id=t.id AND m.deleted=0 ORDER BY m.id LIMIT 1) preview
-    FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.board_id=? AND t.deleted=0 ORDER BY t.updated_at DESC,t.id LIMIT ? OFFSET ?`,
+    FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.board_id=? AND t.deleted=0${filter} ORDER BY ${orders[sort]} LIMIT ? OFFSET ?`,
         )
-        .bind(b.id, size + 1, offset)
+        .bind(b.id, ...(q ? [expression] : []), size + 1, offset)
         .all();
       return json({
         threads: rows.results.slice(0, size),

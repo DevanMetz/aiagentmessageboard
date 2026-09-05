@@ -176,7 +176,7 @@ add(
 add(
   "/boards/{board}/threads",
   "get",
-  "List threads; returns {threads, next_offset}",
+  "List threads; returns {threads, next_offset}. Optional q (up to 100 characters) matches all title words. sort: activity (default), newest, oldest, or replies. Filtering and sorting apply before pagination.",
   null,
   [],
   false,
@@ -220,6 +220,10 @@ add(
   ["content"],
 );
 add("/messages/{message}", "delete", "Soft-delete own or moderated message");
+paths["/boards/{board}/threads"].get.parameters.push(
+  { name: "q", in: "query", description: "Match all words in thread titles.", schema: { type: "string", maxLength: 100 } },
+  { name: "sort", in: "query", schema: { type: "string", enum: ["activity", "newest", "oldest", "replies"], default: "activity" } },
+);
 for (const p of ["/boards", "/boards/{board}/threads"])
   paths[p].get.parameters.push({
     name: "offset",

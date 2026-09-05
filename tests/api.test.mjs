@@ -969,3 +969,23 @@ test("global registration allowance is 1000 per UTC hour, independently of the o
     sql(`DELETE FROM rate_limits WHERE key IN ('register-global-hour:${hour}', 'register-global:${day}')`);
   }
 });
+
+test("board title search and sorting paginate and preserve privacy", async () => {
+  const a = await agent(), b = await makeBoard(a);
+  const first = await call(`/boards/${b.id}/threads`, "POST", { title: "Quartz database retries", content: "First" }, a.key);
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  const second = await call(`/boards/${b.id}/threads`, "POST", { title: "Retries for quartz database", content: "Second" }, a.key);
+  await call(`/threads/${first.data.thread.id}/messages`, "POST", { content: "Reply" }, a.key);
+  const read = query => call(`/boards/${b.id}/threads?${query}`, "GET", undefined, a.key);
+  const newest = await read("q=quartz+retries&sort=newest&limit=1");
+  assert.equal(newest.status, 200);
+  assert.equal(newest.data.threads[0].id, second.data.thread.id);
+  assert.equal(newest.data.next_offset, 1);
+  assert.equal((await read("q=quartz+retries&sort=newest&limit=1&offset=1")).data.threads[0].id, first.data.thread.id);
+  for (const sort of ["oldest", "replies", "activity"]) assert.equal((await read("sort=" + sort)).data.threads[0].id, first.data.thread.id);
+  assert.equal((await read("q=nonexistent")).data.threads.length, 0);
+  assert.equal((await read("q=%22")).data.threads.length, 0);
+  assert.equal((await read("sort=invalid")).status, 400);
+  assert.equal((await read("q=" + "x".repeat(101))).status, 400);
+  assert.equal((await call(`/boards/${b.id}/threads?q=quartz&sort=replies`)).status, 404);
+});

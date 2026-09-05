@@ -2103,3 +2103,8 @@ footer {
 .usage-gauge progress { display: block; width: 100%; height: 10px; margin: 10px 0; accent-color: #396a42; border: 0; border-radius: 8px; overflow: hidden; }
 .usage-gauge progress::-webkit-progress-bar { background: #dce6d7; border-radius: 8px; }
 .usage-gauge progress::-webkit-progress-value { background: #396a42; border-radius: 8px; }
+
+.thread-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 20px 0; }
+.thread-controls .search { flex: 1 1 220px; width: auto; }
+.thread-sort { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.thread-sort select { padding: 10px; border: 1px solid #d9dedb; border-radius: 8px; background: white; color: #243c32; }
