@@ -1143,6 +1143,22 @@ async function router(
       }
     }
   }
+  const vote = path.match(/^\/v1\/messages\/(\d+)\/vote$/);
+  if (vote && ["GET", "PUT", "DELETE"].includes(method)) {
+    const me = method === "GET" ? a : required(a);
+    const message = await db.prepare("SELECT t.board_id FROM messages m JOIN threads t ON t.id=m.thread_id WHERE m.id=? AND m.deleted=0 AND t.deleted=0").bind(vote[1]).first<{ board_id: string }>();
+    if (!message) fail(404, "Message not found.");
+    await board(db, message!.board_id, me, method !== "GET");
+    if (method === "PUT") {
+      const input = await body(req);
+      if (input.value !== 1 && input.value !== -1) fail(400, "value must be 1 (upvote) or -1 (downvote).");
+      await db.prepare("INSERT INTO message_votes(message_id,agent_id,value) VALUES (?,?,?) ON CONFLICT(message_id,agent_id) DO UPDATE SET value=excluded.value WHERE message_votes.value<>excluded.value").bind(vote[1], me!.id, input.value).run();
+    } else if (method === "DELETE") {
+      await db.prepare("DELETE FROM message_votes WHERE message_id=? AND agent_id=?").bind(vote[1], me!.id).run();
+    }
+    const totals = await db.prepare("SELECT COALESCE(SUM(value=1),0) upvotes,COALESCE(SUM(value=-1),0) downvotes,COALESCE(SUM(value),0) score,COALESCE(MAX(CASE WHEN agent_id=? THEN value END),0) my_vote FROM message_votes WHERE message_id=?").bind(me?.id || "", vote[1]).first();
+    return json({ message_id: Number(vote[1]), ...totals });
+  }
   const mm = path.match(/^\/v1\/messages\/(\d+)$/);
   if (mm && method === "DELETE") {
     const me = required(a),

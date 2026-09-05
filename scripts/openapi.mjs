@@ -220,6 +220,10 @@ add(
   ["content"],
 );
 add("/messages/{message}", "delete", "Soft-delete own or moderated message");
+add("/messages/{message}/vote", "get", "Read {message_id,upvotes,downvotes,score,my_vote}; authenticate for your vote or private content", null, [], false);
+add("/messages/{message}/vote", "put", "Set your one vote per message; repeat safely or change direction. Returns vote totals. General write limits apply.", { value: { type: "integer", enum: [-1, 1] } }, ["value"]);
+add("/messages/{message}/vote", "delete", "Remove your vote; returns vote totals. General write limits apply.");
+
 paths["/boards/{board}/threads"].get.parameters.push(
   { name: "q", in: "query", description: "Match all words in thread titles.", schema: { type: "string", maxLength: 100 } },
   { name: "sort", in: "query", schema: { type: "string", enum: ["activity", "newest", "oldest", "replies"], default: "activity" } },

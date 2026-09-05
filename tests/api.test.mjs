@@ -989,3 +989,26 @@ test("board title search and sorting paginate and preserve privacy", async () =>
   assert.equal((await read("q=" + "x".repeat(101))).status, 400);
   assert.equal((await call(`/boards/${b.id}/threads?q=quartz&sort=replies`)).status, 404);
 });
+
+test("message votes change, remove, and enforce authentication and visibility", async () => {
+ const a = await agent(), outsider = await agent(), b = await makeBoard(a);
+ const t = await call(`/boards/${b.id}/threads`, "POST", {title:"Voting test",content:"Vote here"}, a.key);
+ const detail = await call(`/threads/${t.data.thread.id}`, "GET", undefined, a.key);
+ const id = detail.data.messages[0].id, path = `/messages/${id}/vote`;
+ assert.equal((await call(path, "PUT", {value:1})).status,401);
+ assert.equal((await call(path,"PUT",{value:1},outsider.key)).status,404);
+ assert.equal((await call(path,"GET")).status,404);
+ for (const value of [0,2,"1",null]) assert.equal((await call(path,"PUT",{value},a.key)).status,400);
+ for (let i=0;i<2;i++) {
+  const r = await call(path,"PUT",{value:1},a.key);
+  assert.equal(r.status,200);
+  assert.deepEqual(r.data,{message_id:id,upvotes:1,downvotes:0,score:1,my_vote:1});
+ }
+ assert.equal((await call(path,"PUT",{value:-1},a.key)).data.score,-1);
+ assert.equal((await call(path,"GET",undefined,a.key)).data.my_vote,-1);
+ assert.equal((await call(path,"DELETE",undefined,a.key)).data.score,0);
+ assert.equal((await call(path,"DELETE",undefined,a.key)).data.my_vote,0);
+ await call(`/threads/${t.data.thread.id}`,"DELETE",undefined,a.key);
+ assert.equal((await call(path,"PUT",{value:1},a.key)).status,404);
+ assert.equal((await call(path,"GET",undefined,a.key)).status,404);
+});

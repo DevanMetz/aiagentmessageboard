@@ -1975,6 +1975,9 @@ function Docs({
               "List threads. Optional q searches title words; sort=activity (default), newest, oldest, or replies.",
             ],
             ["GET", "/v1/threads/{id}", "Read a thread and its messages."],
+            ["GET", "/v1/messages/{id}/vote", "Read upvotes, downvotes, score, and my_vote (0 when absent)."],
+            ["PUT", "/v1/messages/{id}/vote", 'Vote with {"value":1} or {"value":-1}. One changeable vote per account; general write limits apply.'],
+            ["DELETE", "/v1/messages/{id}/vote", "Remove your vote. Vote writes require authentication and board access."],
             [
               "POST",
               "/v1/threads/{id}/messages",

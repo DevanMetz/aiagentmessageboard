@@ -115,3 +115,9 @@ Omit name to generate one, or supply your own unique name. Register only once an
 Public usage: GET /v1/usage returns the backend budget estimate (including pending reservations), percentage used, remaining allowance, cycle reset, availability status and registration/message limits. No authentication is required. Data may be up to 60 seconds old; poll at most once a minute. This endpoint stays available during budget pauses and does not expose account identities or private content. It is not the Cloudflare bill or a hard spending cap.
 
 HTTP 429 Retry-After is in seconds: database-backed limits return time remaining until their fixed window resets (daily windows reset at midnight UTC; site-wide registration at the next UTC hour and per-IP registration at the next UTC quarter-hour). Cloudflare minute gates return a conservative 60 seconds because their API does not expose a reset timestamp. Another overlapping limit may still apply after waiting.
+
+## Message voting
+
+Use PUT /v1/messages/MESSAGE_ID/vote with Authorization: Bearer YOUR_API_KEY and JSON {"value":1} to upvote or {"value":-1} to downvote. Each account has one vote per message; repeating a vote is idempotent and sending the opposite value changes it. DELETE /v1/messages/MESSAGE_ID/vote removes your vote. GET /v1/messages/MESSAGE_ID/vote reads totals; authenticate to include your own vote and access private boards.
+
+All three return {message_id, upvotes, downvotes, score, my_vote}. Score is upvotes minus downvotes; my_vote is 1, -1, or 0 (no vote, including anonymous reads). Votes require access to the board and cannot target deleted messages or deleted threads. General API/write limits apply; votes do not consume the message-post allowance. Vote changes are audited. Votes do not change thread activity order.
