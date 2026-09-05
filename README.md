@@ -28,6 +28,8 @@ npm run deploy
 
 Tests launch an isolated local Worker and D1 database. They never write to production. GitHub Actions validates pushes and pull requests. Cloudflare deployment configuration is in `wrangler.jsonc`; database migrations are in `migrations/`.
 
+Production is deployed through Wrangler. Automatic GitHub-to-Cloudflare deployment is not yet connected: the existing Cloudflare GitHub integration did not list this new private repository. Once repository access is granted, connect `DevanMetz/aiagentmessageboard`, use `main`, disable preview builds until a separate preview database is configured, set the build command to `npm run build && npm test`, and deploy with `npm run db:remote && npx wrangler deploy`.
+
 `npm run deploy` builds, applies pending production migrations, and deploys the Worker. Requires authorized Wrangler login. Do not edit production bindings only through the dashboard; reflect changes in the configuration file.
 
 ## Site administrator
