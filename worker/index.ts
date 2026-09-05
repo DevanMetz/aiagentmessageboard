@@ -1,3 +1,5 @@
+import { publicPage } from "./public-pages";
+
 interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
@@ -8,6 +10,8 @@ type Agent = {
   name: string;
   bio: string;
   is_admin: number;
+  is_visitor: number;
+  key_hash: string;
   created_at: string;
 };
 type Board = {
@@ -54,6 +58,8 @@ const safeAgent = (a: Agent) => ({
   name: a.name,
   bio: a.bio,
   is_admin: !!a.is_admin,
+  is_visitor: !!a.is_visitor,
+  has_api_key: !a.key_hash.startsWith("unissued:"),
   created_at: a.created_at,
 });
 const safeBoard = (b: Board) => {
@@ -70,6 +76,18 @@ function text(
   if (typeof v !== "string" || v.trim().length < min || v.length > max)
     fail(400, `${key} must be ${min}–${max} characters.`);
   return (v as string).trim();
+}
+function accountName(b: Record<string, unknown>) {
+  const name = text(b, "name", 3, 40);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9 _.-]*$/.test(name))
+    fail(
+      400,
+      "Use letters, numbers, spaces, underscores, dots, or hyphens in your name.",
+    );
+  return name;
+}
+function sessionCookie(value: string, url: URL, seconds: number) {
+  return `amb_session=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${seconds}${url.protocol === "https:" ? "; Secure" : ""}`;
 }
 async function body(req: Request): Promise<Record<string, unknown>> {
   if (!req.headers.get("content-type")?.includes("application/json"))
@@ -255,6 +273,8 @@ async function router(
   );
   if (!(await env.API_GATE.limit({ key: ip })).success)
     fail(429, "Too many API requests. Please try again later.");
+  const page = await publicPage(req, env);
+  if (page) return page;
   if (path === "/v1/health")
     return json({
       status: "ok",
@@ -274,17 +294,45 @@ async function router(
         .run(),
     );
   }
+  if (path === "/v1/visitor" && method === "POST") {
+    await body(req);
+    // Returning visitors and connected agents keep their existing identity.
+    const existing = await auth(req, db);
+    if (existing) return json({ agent: safeAgent(existing), created: false });
+    await limit(db, "visitor-create:" + ip, 20, 3600);
+    await limit(db, "visitor-create-global", 2000, 86400);
+    const id = crypto.randomUUID(),
+      name = "Visitor-" + id.slice(0, 13);
+    const session = token(""),
+      seconds = 365 * 86400;
+    const results = await db.batch([
+      db
+        .prepare(
+          "INSERT INTO agents(id,name,key_hash,is_visitor) VALUES (?,?,?,1) RETURNING *",
+        )
+        .bind(id, name, "unissued:" + id),
+      db
+        .prepare(
+          "INSERT INTO sessions(hash,agent_id,expires_at) VALUES (?,?,?)",
+        )
+        .bind(await hash(session), id, Date.now() + seconds * 1000),
+    ]);
+    const response = json(
+      {
+        agent: safeAgent(results[0].results[0] as unknown as Agent),
+        created: true,
+      },
+      201,
+    );
+    response.headers.set("Set-Cookie", sessionCookie(session, url, seconds));
+    return response;
+  }
   if (path === "/v1/agents" && method === "POST") {
     await limit(db, "register:" + ip, 5, 3600);
     await limit(db, "register-global", 200, 86400);
     const b = await body(req),
-      name = text(b, "name", 3, 40),
+      name = accountName(b),
       bio = b.bio === undefined ? "" : text(b, "bio", 0, 300);
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9 _.-]*$/.test(name))
-      fail(
-        400,
-        "Use letters, numbers, spaces, underscores, dots, or hyphens in your name.",
-      );
     const key = token("amb_"),
       id = crypto.randomUUID();
     const r = await db
@@ -312,20 +360,18 @@ async function router(
       .bind(await hash(key))
       .first<Agent>();
     if (!a) fail(401, "Invalid or revoked API key.");
-    const s = token("");
+    const s = token(""),
+      seconds = (a!.is_visitor ? 365 : 7) * 86400;
     await db.batch([
       db.prepare("DELETE FROM sessions WHERE expires_at<?").bind(Date.now()),
       db
         .prepare(
           "INSERT INTO sessions(hash,agent_id,expires_at) VALUES (?,?,?)",
         )
-        .bind(await hash(s), a!.id, Date.now() + 7 * 86400000),
+        .bind(await hash(s), a!.id, Date.now() + seconds * 1000),
     ]);
     const res = json({ agent: safeAgent(a!) });
-    res.headers.set(
-      "Set-Cookie",
-      `amb_session=${s}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${url.protocol === "https:" ? "; Secure" : ""}`,
-    );
+    res.headers.set("Set-Cookie", sessionCookie(s, url, seconds));
     return res;
   }
   if (path === "/v1/session" && method === "DELETE") {
@@ -351,6 +397,23 @@ async function router(
   }
   if (path === "/v1/me" && method === "GET")
     return json({ agent: a ? safeAgent(a) : null });
+  if (path === "/v1/me" && method === "PATCH") {
+    const me = required(a),
+      input = await body(req);
+    const name = input.name === undefined ? me.name : accountName(input);
+    const bio = input.bio === undefined ? me.bio : text(input, "bio", 0, 300);
+    try {
+      const updated = await db
+        .prepare("UPDATE agents SET name=?,bio=? WHERE id=? RETURNING *")
+        .bind(name, bio, me.id)
+        .first<Agent>();
+      return json({ agent: safeAgent(updated!) });
+    } catch (error) {
+      if (String(error).includes("UNIQUE"))
+        fail(409, "That name is already taken.");
+      throw error;
+    }
+  }
   if (path === "/v1/me/key" && method === "POST") {
     const me = required(a),
       key = token("amb_");
@@ -674,7 +737,7 @@ async function router(
         fail(400, "Invalid offset.");
       const rows = await db
         .prepare(
-          `SELECT t.id,t.title,t.created_at,t.updated_at,t.author_id,a.name author_name,
+          `SELECT t.id,t.title,t.created_at,t.updated_at,t.author_id,a.name author_name,a.is_visitor author_is_visitor,
     (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id AND m.deleted=0) message_count,
     (SELECT substr(content,1,240) FROM messages m WHERE m.thread_id=t.id AND m.deleted=0 ORDER BY m.id LIMIT 1) preview
     FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.board_id=? AND t.deleted=0 ORDER BY t.updated_at DESC,t.id LIMIT ? OFFSET ?`,
@@ -743,7 +806,7 @@ async function router(
         size = pageSize(url);
       const rows = await db
         .prepare(
-          "SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.created_at,a.name author_name,t.title thread_title FROM messages m JOIN threads t ON t.id=m.thread_id JOIN agents a ON a.id=m.author_id WHERE t.board_id=? AND t.deleted=0 AND m.deleted=0 AND m.id>? ORDER BY m.id LIMIT ?",
+          "SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.created_at,a.name author_name,a.is_visitor author_is_visitor,t.title thread_title FROM messages m JOIN threads t ON t.id=m.thread_id JOIN agents a ON a.id=m.author_id WHERE t.board_id=? AND t.deleted=0 AND m.deleted=0 AND m.id>? ORDER BY m.id LIMIT ?",
         )
         .bind(b.id, after, size + 1)
         .all();
@@ -759,7 +822,7 @@ async function router(
   if (tm) {
     const t = await db
       .prepare(
-        "SELECT t.id,t.board_id,t.author_id,t.title,t.created_at,t.updated_at,a.name author_name FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.id=? AND t.deleted=0",
+        "SELECT t.id,t.board_id,t.author_id,t.title,t.created_at,t.updated_at,a.name author_name,a.is_visitor author_is_visitor FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.id=? AND t.deleted=0",
       )
       .bind(tm[1])
       .first<{
@@ -784,7 +847,7 @@ async function router(
         size = pageSize(url),
         rows = await db
           .prepare(
-            "SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.created_at,a.name author_name FROM messages m JOIN agents a ON a.id=m.author_id WHERE thread_id=? AND deleted=0 AND m.id>? ORDER BY m.id LIMIT ?",
+            "SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.created_at,a.name author_name,a.is_visitor author_is_visitor FROM messages m JOIN agents a ON a.id=m.author_id WHERE thread_id=? AND deleted=0 AND m.id>? ORDER BY m.id LIMIT ?",
           )
           .bind(t!.id, after, size + 1)
           .all();

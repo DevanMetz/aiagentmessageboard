@@ -424,3 +424,158 @@ test("registration rate limits apply to a single IP", async () => {
   assert.equal(last.status, 429);
   assert.ok(last.headers.get("retry-after"));
 });
+
+test("visitors automatically receive persistent accounts and returning cookies retain identity", async () => {
+  const first = await call("/visitor", "POST", {});
+  assert.equal(first.status, 201);
+  assert.equal(first.data.created, true);
+  assert.equal(first.data.agent.is_visitor, true);
+  assert.equal(first.data.agent.has_api_key, false);
+  assert.equal(first.data.agent.is_admin, false);
+  assert.ok(!("api_key" in first.data));
+  assert.ok(!("key_hash" in first.data.agent));
+  const cookie = first.headers.get("set-cookie");
+  assert.match(cookie, /HttpOnly/);
+  assert.match(cookie, /Max-Age=31536000/);
+  const headers = { cookie: cookie.split(";")[0] };
+  const again = await call("/visitor", "POST", {}, undefined, headers);
+  assert.equal(again.status, 200);
+  assert.equal(again.data.created, false);
+  assert.equal(again.data.agent.id, first.data.agent.id);
+  const separate = await call("/visitor", "POST", {});
+  assert.notEqual(separate.data.agent.id, first.data.agent.id);
+  assert.equal(
+    (await call("/me", "GET", undefined, undefined, headers)).data.agent.id,
+    first.data.agent.id,
+  );
+});
+
+test("automatic visitor initialization preserves connected agent accounts", async () => {
+  const a = await agent();
+  const login = await call("/session", "POST", { api_key: a.key });
+  const r = await call("/visitor", "POST", {}, undefined, {
+    cookie: login.headers.get("set-cookie").split(";")[0],
+  });
+  assert.equal(r.data.created, false);
+  assert.equal(r.data.agent.id, a.id);
+  assert.equal(r.data.agent.is_visitor, false);
+  assert.equal(r.headers.get("set-cookie"), null);
+});
+
+test("visitor cookies can post and create private boards without registration", async () => {
+  const visitor = await call("/visitor", "POST", {});
+  const headers = { cookie: visitor.headers.get("set-cookie").split(";")[0] };
+  const b = await call(
+    "/boards",
+    "POST",
+    {
+      name: "Visitor Lab",
+      slug: "visitor-" + randomUUID(),
+      description: "Private visitor space",
+      visibility: "private",
+      join_mode: "invite",
+    },
+    undefined,
+    headers,
+  );
+  assert.equal(b.status, 201);
+  const t = await call(
+    `/boards/${b.data.board.id}/threads`,
+    "POST",
+    { title: "Visitor conversation", content: "No signup required." },
+    undefined,
+    headers,
+  );
+  assert.equal(t.status, 201);
+  const detail = await call(
+    `/threads/${t.data.thread.id}`,
+    "GET",
+    undefined,
+    undefined,
+    headers,
+  );
+  assert.equal(detail.data.messages[0].author_is_visitor, 1);
+  assert.equal((await call(`/threads/${t.data.thread.id}`)).status, 404);
+});
+
+test("visitors can rename and save an access key to restore the same account", async () => {
+  const visitor = await call("/visitor", "POST", {});
+  const headers = { cookie: visitor.headers.get("set-cookie").split(";")[0] };
+  const name = "Named visitor " + randomUUID().slice(0, 8);
+  const profile = await call(
+    "/me",
+    "PATCH",
+    { name, bio: "About me", is_admin: 1 },
+    undefined,
+    headers,
+  );
+  assert.equal(profile.status, 200);
+  assert.equal(profile.data.agent.name, name);
+  assert.equal(profile.data.agent.is_admin, false);
+  const key = await call("/me/key", "POST", {}, undefined, headers);
+  assert.equal(key.status, 200);
+  assert.equal(
+    (await call("/me", "GET", undefined, undefined, headers)).data.agent,
+    null,
+  );
+  const restored = await call("/session", "POST", {
+    api_key: key.data.api_key,
+  });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.data.agent.id, visitor.data.agent.id);
+  assert.equal(restored.data.agent.name, name);
+  assert.equal(restored.data.agent.has_api_key, true);
+});
+
+test("public HTML and sitemap expose public content but never private names or messages", async () => {
+  const a = await agent(),
+    b = await makeBoard(a);
+  const privateThread = await call(
+    `/boards/${b.id}/threads`,
+    "POST",
+    { title: "Secret crawl title", content: "Hidden crawl content" },
+    a.key,
+  );
+  const sitemap = await (await fetch(base + "/sitemap.xml")).text();
+  assert.ok(sitemap.includes("/b/general"));
+  assert.ok(sitemap.includes("/t/welcome"));
+  assert.ok(!sitemap.includes(b.slug));
+  assert.ok(!sitemap.includes(privateThread.data.thread.id));
+  const publicHtml = await (await fetch(base + "/t/welcome")).text();
+  assert.ok(publicHtml.includes("This is a shared space for AI agents"));
+  assert.ok(publicHtml.includes('rel="canonical"'));
+  for (const path of ["/b/" + b.slug, "/t/" + privateThread.data.thread.id]) {
+    const response = await fetch(base + path, {
+      headers: { Authorization: "Bearer " + a.key },
+    });
+    assert.equal(response.status, 404);
+    assert.match(response.headers.get("x-robots-tag"), /noindex/);
+    const html = await response.text();
+    assert.ok(!html.includes("Secret crawl title"));
+    assert.ok(!html.includes("Hidden crawl content"));
+    assert.ok(!html.includes(b.name));
+  }
+});
+
+test("skill is publicly readable without creating an account and public HTML escapes message markup", async () => {
+  const skill = await fetch(base + "/skill.md");
+  assert.equal(skill.status, 200);
+  assert.equal(skill.headers.get("set-cookie"), null);
+  assert.match(await skill.text(), /^---\s+name: agent-message-board/);
+  const a = await agent();
+  const t = await call(
+    "/boards/general/threads",
+    "POST",
+    {
+      title: "A <script>bad()</script> title",
+      content: "<img src=x onerror=alert(1)>",
+    },
+    a.key,
+  );
+  const html = await (await fetch(base + "/t/" + t.data.thread.id)).text();
+  assert.ok(html.includes("&lt;img"));
+  // Angle brackets are valid inside a quoted meta-description attribute;
+  // the visible message must never turn into an actual image element.
+  assert.ok(!html.slice(html.indexOf("<body")).includes("<img src=x"));
+  assert.ok(!html.includes("<script>bad()"));
+});

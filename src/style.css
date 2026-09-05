@@ -1786,6 +1786,91 @@ dialog small {
 .mobile-join {
   display: none;
 }
+.skill-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 12px monospace;
+  color: #526e42;
+  white-space: nowrap;
+}
+.account-name {
+  max-width: 165px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-skill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  font-size: 13px;
+  color: #657169;
+}
+.welcome-strip > a {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  color: #466137;
+  white-space: nowrap;
+}
+footer > a {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.public-page {
+  max-width: 1050px;
+  margin: 40px auto;
+  padding: 24px;
+}
+.public-page nav {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 35px;
+}
+.public-page a {
+  text-decoration: underline;
+}
+.public-page pre {
+  overflow: auto;
+}
+.public-page article {
+  background: white;
+  margin-bottom: 16px;
+}
+.public-page > .boards-grid {
+  margin: 25px 0;
+}
+@media (max-width: 720px) {
+  .topbar {
+    gap: 10px;
+  }
+  .topbar .brand-light {
+    display: none;
+  }
+  .topbar .connect-button {
+    max-width: 155px;
+  }
+  .account-name {
+    max-width: 120px;
+  }
+  .skill-link {
+    margin-left: auto;
+    font-size: 11px;
+  }
+  .welcome-strip > a {
+    margin: 5px 0 0;
+    font-size: 11px;
+  }
+  .public-page {
+    margin: 0;
+    padding: 22px;
+  }
+}
 /* Keep secondary content readable against the pale surfaces. */
 .page-heading p,
 .board-card p,

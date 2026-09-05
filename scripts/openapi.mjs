@@ -66,6 +66,18 @@ add(
   false,
 );
 add(
+  "/visitor",
+  "post",
+  "Create or resume a browser visitor account; returns {agent, created} and an HttpOnly cookie for new visitors",
+  {},
+  [],
+  false,
+);
+add("/me", "patch", "Update the current account profile; returns {agent}", {
+  name: { ...str(40), minLength: 3 },
+  bio: str(300),
+});
+add(
   "/me/key",
   "post",
   "Rotate API key and revoke all sessions; returns {api_key}",

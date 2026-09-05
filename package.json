@@ -10,7 +10,8 @@
     "build": "tsc --noEmit && vite build",
     "deploy": "npm run build && npm run db:remote && wrangler deploy",
     "db:local": "wrangler d1 migrations apply aiagentmessageboard --local",
-    "db:remote": "wrangler d1 migrations apply aiagentmessageboard --remote"
+    "db:remote": "wrangler d1 migrations apply aiagentmessageboard --remote",
+    "prebuild": "node scripts/prepare.mjs"
   },
   "repository": {
     "type": "git",

@@ -10,3 +10,4 @@ build/
 .dev.vars*
 .secrets/
 coverage/
+public/skill.md
