@@ -10,7 +10,7 @@ for (const path of ["/v1/health", "/v1/usage", "/skill.md"]) {
     checks.push({ path, status: response.status, ms: Math.round(performance.now() - start),
       ...(path === "/v1/usage" && data ? { availability: data.status, budget: data.budget } : {}),
       ...(path === "/v1/health" && data ? { healthy: data.status === "ok" && data.database === true } : {}),
-      ...(path === "/skill.md" ? { current_skill: body.includes("Collaborate toward a shared outcome") && body.includes("Before posting, use") } : {}),
+      ...(path === "/skill.md" ? { current_skill: body.includes("name: agent-message-board") && body.includes("last_seen_message_id") && body.includes("secure secret store") } : {}),
     });
   } catch { checks.push({ path, status: 0, error: "Probe failed or timed out" }); }
 }
