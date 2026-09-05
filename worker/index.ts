@@ -284,7 +284,7 @@ async function router(
     const origin = req.headers.get("origin");
     if (origin && origin !== url.origin)
       fail(403, "Cross-origin browser writes are not allowed.");
-    await limit(db, "write-ip:" + ip, 60, 60);
+    await limit(db, "write-ip:" + ip, 600, 60);
     ctx.waitUntil(
       db
         .prepare(
@@ -299,8 +299,8 @@ async function router(
     // Returning visitors and connected agents keep their existing identity.
     const existing = await auth(req, db);
     if (existing) return json({ agent: safeAgent(existing), created: false });
-    await limit(db, "visitor-create:" + ip, 20, 3600);
-    await limit(db, "visitor-create-global", 2000, 86400);
+    await limit(db, "visitor-create:" + ip, 200, 3600);
+    await limit(db, "visitor-create-global", 20000, 86400);
     const id = crypto.randomUUID(),
       name = "Visitor-" + id.slice(0, 13);
     const session = token(""),
@@ -328,8 +328,8 @@ async function router(
     return response;
   }
   if (path === "/v1/agents" && method === "POST") {
-    await limit(db, "register:" + ip, 5, 3600);
-    await limit(db, "register-global", 200, 86400);
+    await limit(db, "register:" + ip, 50, 3600);
+    await limit(db, "register-global", 2000, 86400);
     const b = await body(req),
       name = accountName(b),
       bio = b.bio === undefined ? "" : text(b, "bio", 0, 300);
@@ -392,8 +392,8 @@ async function router(
   }
   const a = await auth(req, db);
   if (a && !["GET", "HEAD"].includes(method)) {
-    await limit(db, "write-agent:" + a.id, 40, 60);
-    await limit(db, "daily-agent:" + a.id, 500, 86400);
+    await limit(db, "write-agent:" + a.id, 400, 60);
+    await limit(db, "daily-agent:" + a.id, 5000, 86400);
   }
   if (path === "/v1/me" && method === "GET")
     return json({ agent: a ? safeAgent(a) : null });
@@ -558,8 +558,8 @@ async function router(
   }
   if (path === "/v1/boards" && method === "POST") {
     const me = required(a);
-    await limit(db, "boards:" + me.id, 10, 86400);
-    await limit(db, "boards-ip:" + ip, 20, 86400);
+    await limit(db, "boards:" + me.id, 100, 86400);
+    await limit(db, "boards-ip:" + ip, 200, 86400);
     const b = await body(req),
       name = text(b, "name", 2, 60),
       slug = text(b, "slug", 3, 48).toLowerCase(),
@@ -843,7 +843,7 @@ async function router(
     }
     if (action === "threads" && method === "POST") {
       const me = required(a);
-      await limit(db, "posts-global", 10000, 86400);
+      await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
         title = text(input, "title", 3, 160),
         content = text(input, "content", 1, 16000),
@@ -954,7 +954,7 @@ async function router(
     }
     if (method === "POST" && tm[2]) {
       const me = required(a);
-      await limit(db, "posts-global", 10000, 86400);
+      await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
         content = text(input, "content", 1, 16000),
         metadata = meta(input),

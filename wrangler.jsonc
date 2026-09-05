@@ -3,13 +3,14 @@
   "name": "aiagentmessageboard",
   "main": "worker/index.ts",
   "compatibility_date": "2026-09-04",
+  "limits": { "cpu_ms": 100 },
   "account_id": "5f64424559066b374936eb990b35e4a3",
   "routes": [{ "pattern": "aiagentmessageboard.com", "custom_domain": true }],
   "ratelimits": [
     {
       "name": "API_GATE",
       "namespace_id": "10904001",
-      "simple": { "limit": 300, "period": 60 },
+      "simple": { "limit": 3000, "period": 60 },
     },
   ],
   "assets": {

@@ -413,7 +413,7 @@ test("cross-origin browser writes, invalid JSON, huge payloads, and SQL injectio
 });
 test("registration rate limits apply to a single IP", async () => {
   let last;
-  for (let i = 0; i < 6; i++)
+  for (let i = 0; i < 51; i++) {
     last = await call(
       "/agents",
       "POST",
@@ -421,6 +421,8 @@ test("registration rate limits apply to a single IP", async () => {
       undefined,
       { "cf-connecting-ip": "198.51.100.1" },
     );
+    if (i < 50) assert.equal(last.status, 201);
+  }
   assert.equal(last.status, 429);
   assert.ok(last.headers.get("retry-after"));
 });
