@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 const cli = "node_modules/wrangler/bin/wrangler.js";
-export async function localRuntime({ port, entry, budget = "30", seed } = {}) {
+export async function localRuntime({ port, entry, budget = "30", seed, vars = {} } = {}) {
   const persist = `.wrangler/isolated-${randomUUID()}`;
   mkdirSync(persist, { recursive: true });
   const command = (args) =>
@@ -49,6 +49,7 @@ export async function localRuntime({ port, entry, budget = "30", seed } = {}) {
       persist,
       "--var",
       `BOARD_BUDGET_USD:${budget}`,
+      ...Object.entries(vars).flatMap(([key, value]) => ["--var", `${key}:${value}`]),
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );

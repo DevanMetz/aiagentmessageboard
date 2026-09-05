@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-05T01:10:00.791Z",
+  "generated_at": "2026-09-05T01:55:42.692Z",
   "environment": "local Cloudflare workerd/D1 emulator; not production capacity certification",
   "fixture": {
     "agents": 1000,
@@ -38,135 +38,135 @@
   "stages": [
     {
       "agents": 100,
-      "elapsed_seconds": 29.9414303,
+      "elapsed_seconds": 29.9354478,
       "requests": 100,
       "errors": 0,
       "statuses": {
         "200": 95,
         "201": 5
       },
-      "p50_ms": 15.96849999999904,
-      "p95_ms": 45.36039999999957,
-      "p99_ms": 631.0301,
+      "p50_ms": 14.89379999999801,
+      "p95_ms": 38.150699999998324,
+      "p99_ms": 498.6274000000012,
       "cache_hits": 64,
       "slowest": [
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 631.0301
+          "ms": 498.6274000000012
         },
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 521.9232000000011
+          "ms": 460.55229999999574
         },
         {
           "path": "/v1/threads/load-thread-1/messages",
           "status": 201,
-          "ms": 351.7287000000015
+          "ms": 205.72130000000107
         },
         {
           "path": "/v1/threads/load-thread-1/messages",
           "status": 201,
-          "ms": 229.40299999999843
+          "ms": 151.7882000000027
         },
         {
-          "path": "/v1/boards/load-board-1/messages?after=100001",
+          "path": "/v1/search/messages?q=observation%2099999",
           "status": 200,
-          "ms": 45.36039999999957
+          "ms": 38.150699999998324
         }
       ],
-      "d1_rows_read": 2008256,
-      "d1_rows_written": 97,
-      "conservative_estimated_usd": 0.0027112560000000507
+      "d1_rows_read": 2008360,
+      "d1_rows_written": 206,
+      "conservative_estimated_usd": 0.002820360000000053
     },
     {
       "agents": 500,
-      "elapsed_seconds": 30.1857359,
+      "elapsed_seconds": 30.172725600000007,
       "requests": 500,
       "errors": 0,
       "statuses": {
         "200": 475,
         "201": 25
       },
-      "p50_ms": 14.777600000001257,
-      "p95_ms": 35.022199999992154,
-      "p99_ms": 464.4825999999957,
+      "p50_ms": 13.708699999995588,
+      "p95_ms": 33.06960000000254,
+      "p99_ms": 386.44830000000366,
       "cache_hits": 344,
       "slowest": [
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 554.107600000003
+          "ms": 484.33729999999923
         },
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 515.0512000000017
+          "ms": 476.0237999999954
         },
         {
           "path": "/v1/threads/load-thread-1/messages",
           "status": 201,
-          "ms": 503.73309999999765
+          "ms": 436.67200000000594
+        },
+        {
+          "path": "/v1/threads/load-thread-1/messages",
+          "status": 201,
+          "ms": 425.75530000000435
         },
         {
           "path": "/v1/boards/load-board-1/messages?after=100001",
           "status": 200,
-          "ms": 467.2722999999969
-        },
-        {
-          "path": "/v1/threads/load-thread-1/messages",
-          "status": 201,
-          "ms": 464.4825999999957
+          "ms": 386.44830000000366
         }
       ],
-      "d1_rows_read": 2013494,
-      "d1_rows_written": 455,
-      "conservative_estimated_usd": 0.005474494000000066
+      "d1_rows_read": 2014003,
+      "d1_rows_written": 974,
+      "conservative_estimated_usd": 0.00599400299999996
     },
     {
       "agents": 1000,
-      "elapsed_seconds": 30.213804900000003,
+      "elapsed_seconds": 30.222077300000006,
       "requests": 1000,
       "errors": 0,
       "statuses": {
         "200": 950,
         "201": 50
       },
-      "p50_ms": 14.019700000004377,
-      "p95_ms": 94.3984000000055,
-      "p99_ms": 471.85340000000724,
+      "p50_ms": 13.951400000005378,
+      "p95_ms": 77.28209999999672,
+      "p99_ms": 443.68670000000566,
       "cache_hits": 694,
       "slowest": [
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 550.589100000012
-        },
-        {
-          "path": "/v1/threads/load-thread-1/messages",
-          "status": 201,
-          "ms": 533.8631000000023
-        },
-        {
-          "path": "/v1/boards/load-board-1/messages?after=100001",
-          "status": 200,
-          "ms": 502.58379999999306
-        },
-        {
-          "path": "/v1/boards/load-board-1/messages?after=100001",
-          "status": 200,
-          "ms": 495.32739999999467
+          "ms": 503.18270000000484
         },
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 495.2554999999993
+          "ms": 490.28889999999956
+        },
+        {
+          "path": "/v1/threads/load-thread-1/messages",
+          "status": 201,
+          "ms": 487.97619999999006
+        },
+        {
+          "path": "/v1/threads/load-thread-1/messages",
+          "status": 201,
+          "ms": 474.2606000000087
+        },
+        {
+          "path": "/v1/boards/load-board-1/messages?after=100001",
+          "status": 200,
+          "ms": 457.4631999999983
         }
       ],
-      "d1_rows_read": 2038450,
-      "d1_rows_written": 800,
-      "conservative_estimated_usd": 0.008844449999999567
+      "d1_rows_read": 2039435,
+      "d1_rows_written": 1886,
+      "conservative_estimated_usd": 0.009931434999999468
     }
   ]
 }

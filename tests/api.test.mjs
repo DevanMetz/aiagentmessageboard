@@ -437,7 +437,8 @@ test("message allowance is shared by new threads and replies without blocking re
     a.key,
   );
   assert.equal(blocked.status, 429);
-  assert.ok(blocked.headers.get("retry-after"));
+  assert.ok(Number(blocked.headers.get("retry-after")) >= 1);
+  assert.ok(Number(blocked.headers.get("retry-after")) <= 60);
   assert.equal(
     (await call(`/threads/${first.data.thread.id}`, "GET", undefined, a.key))
       .status,
@@ -544,9 +545,9 @@ test("anonymous read cache is never reused for authenticated or cookie-bearing r
   );
 });
 
-test("registration rate limits apply to a single IP", async () => {
+test("registration allows five per IP per UTC quarter-hour", async () => {
   let last;
-  for (let i = 0; i < 51; i++) {
+  for (let i = 0; i < 6; i++) {
     last = await call(
       "/agents",
       "POST",
@@ -554,9 +555,13 @@ test("registration rate limits apply to a single IP", async () => {
       undefined,
       { "cf-connecting-ip": "198.51.100.1" },
     );
-    if (i < 50) assert.equal(last.status, 201);
+    if (i < 5) assert.equal(last.status, 201);
   }
   assert.equal(last.status, 429);
+  const retry = Number(last.headers.get("retry-after"));
+  const remaining = 900 - Math.floor(Date.now() / 1000) % 900;
+  assert.ok(retry >= 1 && retry <= 900);
+  assert.ok(Math.abs(retry - remaining) <= 2);
   assert.ok(last.headers.get("retry-after"));
 });
 
@@ -816,4 +821,55 @@ test("analytics supports hourly through monthly graphs with consistent private c
     );
   }
   assert.equal((await call("/analytics?range=1year")).status, 400);
+});
+test("compact reads preserve pagination and permissions without changing defaults", async () => {
+  const a = await agent();
+  const b = await makeBoard(a);
+  const created = await call(`/boards/${b.id}/threads`, "POST", {title:"Compact example",content:"First message",metadata:{detail:"keep in full mode"}}, a.key);
+  const tid = created.data.thread.id;
+  await call(`/threads/${tid}/messages`, "POST", {content:"Second message"}, a.key);
+  const full = await call(`/threads/${tid}?limit=1`, "GET", undefined, a.key);
+  const compact = await call(`/threads/${tid}?limit=1&compact=1`, "GET", undefined, a.key);
+  assert.equal(compact.status, 200);
+  assert.deepEqual(Object.keys(compact.data.messages[0]).sort(), ["author_id","content","id","thread_id"]);
+  assert.deepEqual(full.data.messages[0].metadata, {detail:"keep in full mode"});
+  assert.equal(compact.data.next_cursor, full.data.next_cursor);
+  assert.equal(compact.data.has_more, true);
+  const next = await call(`/boards/${b.id}/messages?compact=1&after=${compact.data.next_cursor}`, "GET", undefined, a.key);
+  assert.equal(next.data.messages.length, 1);
+  assert.equal(next.data.messages[0].content, "Second message");
+  assert.equal((await call(`/threads/${tid}?compact=1`)).status, 404);
+  assert.equal((await call(`/boards/${b.id}?compact=1`)).status, 404);
+  const search = await call(`/search/messages?q=First&board=${b.id}&compact=1`, "GET", undefined, a.key);
+  assert.equal(search.data.messages[0].content, "First message");
+  assert.ok("next_offset" in search.data);
+  for (let i=0; i<2; i++) {
+    const list = await call('/boards?compact=1');
+    assert.deepEqual(Object.keys(list.data.boards[0]).sort(), ["id","name","slug"]);
+    assert.ok("next_offset" in list.data);
+    const normal = await call('/boards');
+    assert.ok("description" in normal.data.boards[0]);
+  }
+});
+
+test("global registration allowance is 1000 per UTC hour, independently of the old daily bucket", async () => {
+  const hour = Math.floor(Date.now() / 3600000);
+  const day = Math.floor(Date.now() / 86400000);
+  const sql = (query) => execFileSync(process.execPath, [wrangler, "d1", "execute", "aiagentmessageboard", "--local", "--persist-to", persist, "--command", query], { stdio: "pipe" });
+  sql(`INSERT OR REPLACE INTO rate_limits(key,count,expires_at) VALUES ('register-global-hour:${hour}',999,9999999999),('register-global:${day}',100,9999999999)`);
+  try {
+    assert.equal((await call("/agents", "POST", { name: "last-hour-slot" })).status, 201);
+    const denied = await call("/agents", "POST", { name: "over-hour-slot" });
+    assert.equal(denied.status, 429);
+    assert.ok(Number(denied.headers.get("retry-after")) <= 3600);
+    const usage = await call("/usage");
+    assert.equal(usage.status, 200);
+    assert.equal(usage.data.limits.agent_registrations_per_hour, 1000);
+    assert.equal(usage.data.limits.agent_registrations_per_15_minutes_per_ip, 5);
+    assert.equal(usage.data.limits.agent_registrations_per_hour_per_ip, undefined);
+    assert.equal(usage.data.limits.messages_per_day_per_agent, 1000);
+    assert.equal(usage.data.budget.hard_billing_cap, false);
+  } finally {
+    sql(`DELETE FROM rate_limits WHERE key IN ('register-global-hour:${hour}', 'register-global:${day}')`);
+  }
 });

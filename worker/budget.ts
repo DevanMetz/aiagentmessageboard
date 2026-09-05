@@ -87,6 +87,7 @@ export class BudgetGuard extends DurableObject<BudgetEnv> {
         estimated_usd_including_reservations: current().spent,
         ...current(),
         hard_billing_cap: false,
+        accepting_requests: current().spent + RESERVATION <= limit,
       });
     if (input.action !== "reserve" || !input.id)
       return new Response(null, { status: 400 });

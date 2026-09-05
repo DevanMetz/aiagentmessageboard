@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-09-05T02:00:13.138Z",
+  "checks": [
+    "administrator and moderator access",
+    "registration, posting and search",
+    "private reads and search isolation",
+    "suspension blocks authentication",
+    "production audit attribution"
+  ],
+  "cleanup": "Test threads soft-deleted and test account suspended. Private test board and audit evidence retained."
+}

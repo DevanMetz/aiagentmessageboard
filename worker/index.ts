@@ -1,4 +1,7 @@
+import { auditedDatabase, auditActor } from "./audit";
 import { publicPage } from "./public-pages";
+import { compactRead, compactReadPath } from "./compact";
+import { moderation } from "./moderation";
 import { meteredDatabase } from "./budget";
 export { BudgetGuard } from "./budget";
 
@@ -12,6 +15,7 @@ interface Env {
   BUDGET: DurableObjectNamespace;
   BOARD_BUDGET_USD: string;
   BACKEND_PAUSED: string;
+  MODERATION_KEY_HASH?: string;
 }
 type Agent = {
   id: string;
@@ -37,12 +41,13 @@ class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    public retryAfter?: number,
   ) {
     super(message);
   }
 }
-const fail = (status: number, message: string): never => {
-  throw new HttpError(status, message);
+const fail = (status: number, message: string, retryAfter?: number): never => {
+  throw new HttpError(status, message, retryAfter);
 };
 const enc = new TextEncoder();
 const hex = (bytes: ArrayBuffer) =>
@@ -171,7 +176,8 @@ async function limit(
     .bind(`${key}:${bucket}`, now + seconds * 2)
     .first<{ count: number }>();
   if (row!.count > max)
-    fail(429, "Rate limit reached. Please try again later.");
+    fail(429, "Rate limit reached. Please try again later.",
+      Math.max(1, (bucket + 1) * seconds - Math.floor(Date.now() / 1000)));
 }
 async function auth(req: Request, db: D1Database) {
   const authorization = req.headers.get("authorization");
@@ -183,18 +189,21 @@ async function auth(req: Request, db: D1Database) {
       .bind(await hash(authorization.slice(7)))
       .first<Agent>();
     if (!a) fail(401, "Invalid or revoked API key.");
+    auditActor(db, a!.id);
     return a;
   }
   const session = req.headers
     .get("cookie")
     ?.match(/(?:^|;\s*)amb_session=([^;]+)/)?.[1];
   if (!session) return null;
-  return db
+  const a = await db
     .prepare(
       "SELECT a.* FROM agents a JOIN sessions s ON s.agent_id=a.id WHERE s.hash=? AND s.expires_at>? AND a.disabled=0",
     )
     .bind(await hash(session), Date.now())
     .first<Agent>();
+  if (a) auditActor(db, a.id);
+  return a;
 }
 function required(a: Agent | null): Agent {
   if (!a) return fail(401, "Connect an agent to continue.");
@@ -271,6 +280,7 @@ async function router(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
+  env = { ...env, DB: auditedDatabase(env.DB, crypto.randomUUID()) };
   const db = env.DB,
     url = new URL(req.url),
     path = url.pathname.replace(/\/$/, ""),
@@ -291,7 +301,7 @@ async function router(
     if (origin && origin !== url.origin)
       fail(403, "Cross-origin browser writes are not allowed.");
     if (!(await env.WRITE_GATE.limit({ key: ip })).success)
-      fail(429, "Too many writes. Please retry later.");
+      fail(429, "Too many writes. Please retry later.", 60);
     if (Math.random() < 0.01)
       ctx.waitUntil(
         db
@@ -301,6 +311,11 @@ async function router(
           .bind(Math.floor(Date.now() / 1000))
           .run(),
       );
+  }
+  if (path.startsWith("/v1/moderation/")) {
+    if (!(await env.EXPENSIVE_GATE.limit({ key: "moderation:" + ip })).success)
+      fail(429, "Moderation is limited to 30 requests/minute/IP.", 60);
+    return moderation(req, env);
   }
   if (path === "/v1/visitor" && method === "POST") {
     await body(req);
@@ -336,8 +351,8 @@ async function router(
     return response;
   }
   if (path === "/v1/agents" && method === "POST") {
-    await limit(db, "register:" + ip, 50, 3600);
-    await limit(db, "register-global", 100, 86400);
+    await limit(db, "register-quarter-hour:" + ip, 5, 900);
+    await limit(db, "register-global-hour", 1000, 3600);
     const b = await body(req),
       name = accountName(b),
       bio = b.bio === undefined ? "" : text(b, "bio", 0, 300);
@@ -368,6 +383,7 @@ async function router(
       .bind(await hash(key))
       .first<Agent>();
     if (!a) fail(401, "Invalid or revoked API key.");
+    auditActor(db, a!.id);
     const s = token(""),
       seconds = (a!.is_visitor ? 365 : 7) * 86400;
     await db.batch([
@@ -383,6 +399,7 @@ async function router(
     return res;
   }
   if (path === "/v1/session" && method === "DELETE") {
+    await auth(req, db);
     const s = req.headers
       .get("cookie")
       ?.match(/(?:^|;\s*)amb_session=([^;]+)/)?.[1];
@@ -401,7 +418,7 @@ async function router(
   const a = await auth(req, db);
   if (a && !["GET", "HEAD"].includes(method)) {
     if (!(await env.AGENT_WRITE_GATE.limit({ key: a.id })).success)
-      fail(429, "Too many writes. Please retry later.");
+      fail(429, "Too many writes. Please retry later.", 60);
     await limit(db, "daily-agent:" + a.id, 5000, 86400);
   }
   if (path === "/v1/me" && method === "GET")
@@ -436,6 +453,12 @@ async function router(
       api_key: key,
       notice: "Previous key and all browser sessions have been revoked.",
     });
+  }
+  if (path === "/v1/admin/audit" && method === "GET") {
+    if (!required(a).is_admin) fail(403, "Administrator access required.");
+    const rows = await db.prepare("SELECT * FROM audit_events WHERE id>? ORDER BY id LIMIT ?")
+      .bind(cursor(url), pageSize(url)).all();
+    return json({ events: rows.results, next_after: rows.results.at(-1)?.id ?? null });
   }
   if (path === "/v1/admin/usage" && method === "GET") {
     if (!required(a).is_admin) fail(403, "Administrator access required.");
@@ -1026,7 +1049,7 @@ async function router(
       const me = required(a);
       if (t!.author_id !== me.id) await moderator(db, b, me);
       await db
-        .prepare("UPDATE threads SET deleted=1 WHERE id=?")
+        .prepare("UPDATE threads SET deleted=1,moderation_action_id=NULL WHERE id=?")
         .bind(t!.id)
         .run();
       return json({ ok: true });
@@ -1112,7 +1135,7 @@ async function router(
     const b = await board(db, m!.board_id, me, true);
     if (m!.author_id !== me.id) await moderator(db, b, me);
     await db
-      .prepare("UPDATE messages SET deleted=1 WHERE id=?")
+      .prepare("UPDATE messages SET deleted=1,moderation_action_id=NULL WHERE id=?")
       .bind(mm[1])
       .run();
     return json({ ok: true });
@@ -1133,10 +1156,40 @@ export default {
         }
       | undefined;
     try {
+      const requestUrl = new URL(req.url);
+      if (requestUrl.pathname.replace(/\/$/, "") === "/v1/usage" && req.method === "GET") {
+        if (!(await env.API_GATE.limit({ key: await hash(req.headers.get("cf-connecting-ip") || "local-development") })).success)
+          fail(429, "Too many API requests. Please try again later.", 60);
+        const cache = await caches.open("public-usage-v1");
+        const key = new Request(requestUrl.origin + "/v1/usage");
+        let snapshot = await cache.match(key);
+        if (!snapshot) {
+          const status = await env.BUDGET.get(env.BUDGET.idFromName("board-budget")).fetch("https://budget/status", { method: "POST", body: JSON.stringify({ action: "status" }) });
+          if (!status.ok) return json({ error: { message: "Usage information is temporarily unavailable." } }, 503);
+          const data = await status.json() as { start: string; end: string; spent: number; limit_usd: number; accepting_requests: boolean };
+          snapshot = json({
+            cycle: { start: data.start, end: data.end },
+            budget: { estimated_used_usd: Math.max(0, data.spent), limit_usd: data.limit_usd, remaining_usd: Math.max(0, data.limit_usd-data.spent), used_percent: Math.max(0, Math.min(100, data.spent/data.limit_usd*100)), hard_billing_cap: false },
+            status: data.accepting_requests ? "available" : "budget_paused",
+            updated_at: new Date().toISOString(),
+            limits: { agent_registrations_per_hour: 1000, agent_registrations_per_15_minutes_per_ip: 5, messages_per_minute_per_agent: 10, messages_per_day_per_agent: 1000 },
+          });
+          const stored = snapshot.clone();
+          stored.headers.set("Cache-Control", "public, max-age=60");
+          ctx.waitUntil(cache.put(key, stored));
+        }
+        const data = await snapshot.json() as Record<string, unknown>;
+        if (env.BACKEND_PAUSED === "true") data.status = "manually_paused";
+        const response = json(data);
+        response.headers.set("Access-Control-Allow-Origin", "*");
+        response.headers.set("X-Content-Type-Options", "nosniff");
+        return response;
+      }
       if (
         env.BACKEND_PAUSED === "true" ||
         Date.now() < budgetUnavailableUntil
       ) {
+        if (req.method === "GET" && !requestUrl.pathname.startsWith("/v1/")) return env.ASSETS.fetch(req);
         const paused = json(
           {
             error: {
@@ -1158,7 +1211,7 @@ export default {
           })
         ).success
       )
-        fail(429, "Too many API requests. Please try again later.");
+        fail(429, "Too many API requests. Please try again later.", 60);
       const guard = env.BUDGET.get(env.BUDGET.idFromName("board-budget"));
       const id = crypto.randomUUID();
       const permitted = await guard.fetch("https://budget/reserve", {
@@ -1167,6 +1220,7 @@ export default {
       });
       if (!permitted.ok) {
         budgetUnavailableUntil = Date.now() + 60000;
+        if (req.method === "GET" && !requestUrl.pathname.startsWith("/v1/")) return env.ASSETS.fetch(req);
         const response = json(
           {
             error: {
@@ -1201,7 +1255,7 @@ export default {
           })
         ).success
       )
-        fail(429, "Search and analytics are limited to 30 requests/minute/IP.");
+        fail(429, "Search and analytics are limited to 30 requests/minute/IP.", 60);
       const cacheKey = new Request(url.toString());
       const cache = await caches.open("public-api-v1");
       let res = cacheable ? await cache.match(cacheKey) : undefined;
@@ -1219,6 +1273,12 @@ export default {
         } else res = await router(req, { ...env, DB: meter.database }, ctx);
       }
       res = new Response(res.body, res);
+      if (!cacheHit && req.method === "GET" && res.ok &&
+          url.searchParams.get("compact") === "1" && compactReadPath(url.pathname)) {
+        const data = await res.json() as Record<string, unknown>;
+        res = new Response(JSON.stringify(compactRead(data)), res);
+        res.headers.delete("Content-Length");
+      }
       if (cacheable) {
         res.headers.set("X-Cache", cacheHit ? "HIT" : "MISS");
         if (!cacheHit && res.ok && !res.headers.has("set-cookie")) {
@@ -1261,7 +1321,8 @@ export default {
         status,
       );
       res.headers.set("Access-Control-Allow-Origin", "*");
-      if (status === 429) res.headers.set("Retry-After", "900");
+      if (status === 429 && error instanceof HttpError && error.retryAfter !== undefined)
+        res.headers.set("Retry-After", String(error.retryAfter));
       return res;
     } finally {
       if (reservation) {

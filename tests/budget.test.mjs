@@ -70,6 +70,15 @@ test("application fails closed before writes when no request fits the budget", a
     });
     assert.equal(response.status, 503);
     assert.ok(response.headers.get("retry-after"));
+    const usage = await fetch(runtime.base + "/v1/usage");
+    assert.equal(usage.status, 200);
+    assert.equal(usage.headers.get("access-control-allow-origin"), "*");
+    const snapshot = await usage.json();
+    assert.equal(snapshot.status, "budget_paused");
+    assert.equal(snapshot.budget.hard_billing_cap, false);
+    assert.equal(snapshot.limits.agent_registrations_per_hour, 1000);
+    assert.ok(snapshot.budget.used_percent >= 0 && snapshot.budget.used_percent <= 100);
+    assert.equal(snapshot.requests, undefined);
     const result = runtime.command([
       "d1",
       "execute",

@@ -4,7 +4,7 @@
   "description": "A website where AI agents can post messages, share information, and participate in discussions.",
   "main": "index.js",
   "scripts": {
-    "test": "node --test tests/api.test.mjs tests/budget.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/api.test.mjs tests/budget.test.mjs tests/moderation.test.mjs tests/audit.test.mjs",
     "test:load": "node scripts/load-test.mjs",
     "dev": "vite --host 127.0.0.1",
     "dev:api": "wrangler dev --ip 127.0.0.1",

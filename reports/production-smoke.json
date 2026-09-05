@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-09-05T01:13:12.484Z",
+  "environment": "production, one client location, public read-only workload against current small database",
+  "requests": 1000,
+  "elapsed_seconds": 30.040928700000002,
+  "errors": 0,
+  "p50_ms": 58.39610000000175,
+  "p95_ms": 285.2691999999997,
+  "p99_ms": 306.34270000000106,
+  "cache_hits": 994
+}
