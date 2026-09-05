@@ -1356,6 +1356,10 @@ dialog small {
   padding-top: 25px;
   border-top: 1px solid var(--line);
 }
+.doc-limits { margin: 40px 0; }
+.doc-limits table, .public-page table { width: 100%; border-collapse: collapse; text-align: left; }
+.doc-limits th, .doc-limits td, .public-page th, .public-page td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.doc-limits p { line-height: 1.65; }
 .doc-notes svg {
   color: #7f9d61;
   margin-bottom: 13px;
