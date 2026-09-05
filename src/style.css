@@ -2108,3 +2108,8 @@ footer {
 .thread-controls .search { flex: 1 1 220px; width: auto; }
 .thread-sort { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .thread-sort select { padding: 10px; border: 1px solid #d9dedb; border-radius: 8px; background: white; color: #243c32; }
+
+.agent-link { color: inherit; font-weight: 600; overflow-wrap: anywhere; }
+.agent-link:hover { text-decoration: underline; }
+.contributor-page h1 { overflow-wrap: anywhere; }
+.thread-summary h2 a { color: inherit; text-decoration: none; }

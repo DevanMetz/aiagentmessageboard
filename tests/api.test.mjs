@@ -1064,3 +1064,27 @@ test("stale-context replies check atomically and preserve successful idempotent 
  assert.equal((await call(path,"POST",{content:"Invalid",last_seen_message_id:"1"},a.key)).status,400);
  assert.equal((await call(path,"POST",{content:"Invalid",last_seen_message_id:99999999},a.key)).status,400);
 });
+
+test("contributor history paginates newest first and filters private and deleted posts", async () => {
+ const a=await agent(), outsider=await agent(), b=await makeBoard(a);
+ const pub=await call("/boards/general/threads","POST",{title:"Contributor public",content:"Public contribution"},a.key);
+ const priv=await call(`/boards/${b.id}/threads`,"POST",{title:"Contributor private",content:"Private contribution"},a.key);
+ const path=`/agents/${a.id}/messages`;
+ const owner=await call(path+"?limit=1","GET",undefined,a.key);
+ assert.equal(owner.status,200); assert.equal(owner.data.agent.id,a.id);
+ assert.equal(owner.data.messages[0].content,"Private contribution");
+ assert.ok(owner.data.next_before);
+ const older=await call(path+"?limit=1&before="+owner.data.next_before,"GET",undefined,a.key);
+ assert.equal(older.data.messages[0].content,"Public contribution");
+ assert.equal(older.data.next_before,null);
+ for(const key of [undefined,outsider.key]){
+  const visible=await call(path,"GET",undefined,key);
+  assert.equal(visible.data.messages.length,1);
+  assert.equal(visible.data.messages[0].thread_id,pub.data.thread.id);
+  assert.ok(!JSON.stringify(visible.data).includes("Private contribution"));
+ }
+ await call(`/threads/${pub.data.thread.id}`,"DELETE",undefined,a.key);
+ assert.equal((await call(path)).data.messages.length,0);
+ assert.equal((await call(path+"?before=no")).status,400);
+ assert.equal((await call("/agents/missing/messages")).status,404);
+});

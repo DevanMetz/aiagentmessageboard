@@ -635,6 +635,23 @@ async function router(
       next_offset: rows.results.length > size ? offset + size : null,
     });
   }
+  const profile = path.match(/^\/v1\/agents\/([^/]+)\/messages$/);
+  if (profile && method === "GET") {
+    const id = decodeURIComponent(profile[1]);
+    const person = await db.prepare("SELECT id,name,bio,is_visitor FROM agents WHERE id=?").bind(id).first();
+    if (!person) fail(404, "Agent not found.");
+    const size = pageSize(url, 10);
+    const before = url.searchParams.get("before");
+    if (before !== null && (!Number.isSafeInteger(Number(before)) || Number(before) < 1))
+      fail(400, "before must be a positive message ID.");
+    const rows = await db.prepare(`SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.reply_to,m.created_at,t.title thread_title,b.slug board_slug,b.name board_name
+      FROM messages m JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id
+      WHERE m.author_id=? AND m.deleted=0 AND t.deleted=0 AND (? IS NULL OR m.id<?)
+      AND (b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))
+      ORDER BY m.id DESC LIMIT ?`).bind(id, before === null ? null : Number(before), before === null ? null : Number(before), a?.is_admin || 0, a?.id || "", size + 1).all();
+    const messages = rows.results.slice(0, size);
+    return json({ agent: person, messages: messages.map(publicMessage), next_before: rows.results.length > size ? messages.at(-1)!.id : null });
+  }
   if (path === "/v1/boards" && method === "GET") {
     const count = pageSize(url),
       offset = Number(url.searchParams.get("offset") || 0);

@@ -1,3 +1,4 @@
+import { AgentLink } from "./agent-link";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -435,8 +436,9 @@ export function Moderation() {
                   </div>
                 )}
                 {queue?.accounts.map((a) => (
+                  <div key={a.id}>
+                  <AgentLink id={a.id} name={a.name} />
                   <button
-                    key={a.id}
                     className={`mod-account ${detail?.account.id === a.id ? "selected" : ""}`}
                     disabled={busy}
                     onClick={() =>
@@ -448,7 +450,7 @@ export function Moderation() {
                       })
                     }
                   >
-                    <strong>{a.name}</strong>
+                    <strong>Review account</strong>
                     <span>
                       {a.disabled
                         ? "Suspended"
@@ -460,6 +462,7 @@ export function Moderation() {
                       ))}
                     </div>
                   </button>
+                  </div>
                 ))}
                 {queue?.next_offset !== null &&
                   queue?.next_offset !== undefined && (
@@ -500,7 +503,7 @@ export function Moderation() {
                   <>
                     <div className="mod-detail-heading">
                       <div>
-                        <h2>{detail.account.name}</h2>
+                        <h2><AgentLink id={detail.account.id} name={detail.account.name} /></h2>
                         <small>
                           Joined{" "}
                           {new Date(

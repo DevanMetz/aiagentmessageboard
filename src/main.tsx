@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import "./style.css";
+import { AgentLink } from "./agent-link";
 import { Moderation } from "./moderation";
 
 type Agent = {
@@ -267,7 +268,7 @@ function App() {
     setNextOffset(null);
     setHasMore(false);
     async function load() {
-      if (docs || path === "/analytics") return;
+      if (docs || path === "/analytics" || path.startsWith("/a/")) return;
       if (isBoard) {
         const slug = encodeURIComponent(path.slice(3));
         const [b, t] = await Promise.all([
@@ -460,6 +461,7 @@ function App() {
           <Code2 size={15} />
           skill.md
         </a>
+        {agent && <AgentLink id={agent.id} name={agent.name} />}
         <button
           className={"connect-button " + (agent ? "connected" : "")}
           disabled={accountLoading}
@@ -468,7 +470,7 @@ function App() {
           {agent ? (
             <>
               <span className="status-dot" />
-              <span className="account-name">{agent.name}</span>
+              <span className="account-name">Account settings</span>
             </>
           ) : (
             <>
@@ -596,7 +598,9 @@ function App() {
               </button>
             </div>
           )}
-          {path === "/analytics" ? (
+          {path.startsWith("/a/") ? (
+            <Contributor key={path + (agent?.id || "")} id={path.slice(3)} />
+          ) : path === "/analytics" ? (
             <Analytics key={agent?.id || "guest"} navigate={navigate} />
           ) : docs ? (
             <Docs copy={copy} onConnect={() => open("connect")} />
@@ -928,17 +932,17 @@ function App() {
                       </div>
                       <div className="thread-list">
                         {threads.map((t) => (
-                          <button
+                          <div
                             className="thread-row"
                             key={t.id}
                             onClick={() => navigate("/t/" + t.id)}
                           >
                             <Avatar name={t.author_name} />
                             <div className="thread-summary">
-                              <h2>{t.title}</h2>
+                              <h2><a href={"/t/" + t.id}>{t.title}</a></h2>
                               <p>{t.preview}</p>
                               <div className="thread-meta">
-                                <strong>{t.author_name}</strong>
+                                <AgentLink id={t.author_id} name={t.author_name} />
                                 <span>·</span>
                                 <time>{ago(t.updated_at)}</time>
                               </div>
@@ -948,7 +952,7 @@ function App() {
                               {Math.max(0, t.message_count - 1)}
                             </span>
                             <ChevronRight size={18} />
-                          </button>
+                          </div>
                         ))}
                       </div>
                       {threads.length === 0 && (
@@ -979,7 +983,7 @@ function App() {
                         <span className="eyebrow">b/{board.slug}</span>
                         <h1>{thread.title}</h1>
                         <div className="thread-meta">
-                          Started by <strong>{thread.author_name}</strong>
+                          Started by <AgentLink id={thread.author_id} name={thread.author_name} />
                           <span>·</span>
                           <time>{ago(thread.created_at)}</time>
                         </div>
@@ -998,7 +1002,7 @@ function App() {
                             <Avatar name={m.author_name} />
                             <div className="message-body">
                               <header>
-                                <strong>{m.author_name}</strong>
+                                <AgentLink id={m.author_id} name={m.author_name} />
                                 <span className="agent-tag">
                                   {m.author_is_visitor ? "MEMBER" : "AGENT"}
                                 </span>
@@ -1060,7 +1064,7 @@ function App() {
                               {replyTo && <p>Replying to message #{replyTo} <button type="button" onClick={() => setReplyTo(null)}>Cancel</button></p>}
                               <label htmlFor="reply">
                                 Continue the conversation{" "}
-                                <span>as {agent.name}</span>
+                                <span>as <AgentLink id={agent.id} name={agent.name} /></span>
                               </label>
                               <textarea
                                 id="reply"
@@ -1510,7 +1514,7 @@ function App() {
         {modal === "account" && agent && (
           <>
             <Avatar name={agent.name} />
-            <h2>{agent.name}</h2>
+            <h2><AgentLink id={agent.id} name={agent.name} /></h2>
             <p className="modal-intro">
               {agent.is_visitor
                 ? "Your account was created automatically and is remembered in this browser. Save an access key to keep it if you clear cookies or switch devices."
@@ -1698,7 +1702,7 @@ function App() {
                 <div className="member" key={m.id}>
                   <Avatar name={m.name} small />
                   <div>
-                    <strong>{m.name}</strong>
+                    <AgentLink id={m.id} name={m.name} />
                     <span>
                       {m.role} · {m.status}
                     </span>
@@ -2228,7 +2232,7 @@ function Analytics({ navigate }: { navigate: (path: string) => void }) {
               <thead><tr><th scope="col">Rank</th><th scope="col">Contributor</th><th scope="col">Messages</th><th scope="col">Boards</th></tr></thead>
               <tbody>{data.contributors.map((contributor, index) => <tr key={contributor.id}>
                 <td>{index + 1}</td>
-                <td><strong>{contributor.name}</strong> <span className="agent-tag">{contributor.is_visitor ? "MEMBER" : "AGENT"}</span></td>
+                <td><AgentLink id={contributor.id} name={contributor.name} /> <span className="agent-tag">{contributor.is_visitor ? "MEMBER" : "AGENT"}</span></td>
                 <td>{contributor.messages.toLocaleString()}</td><td>{contributor.boards.toLocaleString()}</td>
               </tr>)}</tbody>
             </table></div> : <p>No contributions in this period.</p>}
@@ -2381,4 +2385,53 @@ function ActivityGraph({
       )}
     </div>
   );
+}
+
+type ContributorData = {
+  agent: { id: string; name: string; bio: string; is_visitor: number };
+  messages: (Message & { thread_id: string; thread_title: string; board_slug: string; board_name: string })[];
+  next_before: number | null;
+};
+function Contributor({ id }: { id: string }) {
+  const [data, setData] = useState<ContributorData | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setError("");
+    api<ContributorData>("/agents/" + encodeURIComponent(id) + "/messages?limit=10")
+      .then(value => { if (active) setData(value); })
+      .catch(error => { if (active) setError(error.message); });
+    return () => { active = false; };
+  }, [id, retry]);
+  async function more() {
+    if (!data || busy || data.next_before === null) return;
+    setBusy(true); setError("");
+    try {
+      const result = await api<ContributorData>("/agents/" + encodeURIComponent(id) + "/messages?limit=10&before=" + data.next_before);
+      setData(current => current ? { ...result, messages: [...current.messages, ...result.messages] } : result);
+    } catch (error) { setError((error as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <section className="contributor-page">
+    <a href="/">All boards</a>
+    {error && <p role="alert">{error} {!data && <button onClick={() => setRetry(value => value + 1)}>Retry</button>}</p>}
+    {!data && !error && <p role="status">Loading contributor...</p>}
+    {data && <>
+      <h1><AgentLink id={data.agent.id} name={data.agent.name} /></h1>
+      <p>{data.agent.bio}</p>
+      <h2>Messages</h2><p>Newest first. Only messages in boards you can access are shown.</p>
+      {!data.messages.length && <p>No visible messages yet.</p>}
+      {data.messages.map(message => <article className="message" key={message.id}>
+        <div className="message-body">
+          <header><a href={"/b/" + message.board_slug}>{message.board_name}</a><time>{ago(message.created_at)}</time></header>
+          <h3><a href={`/t/${message.thread_id}?after=${message.id - 1}#message-${message.id}`}>{message.thread_title} · #{message.id}</a></h3>
+          <p>{message.content}</p>
+          {message.reply_to && <a href={`/t/${message.thread_id}?after=${message.reply_to - 1}#message-${message.reply_to}`}>In reply to #{message.reply_to}</a>}
+        </div>
+      </article>)}
+      {data.next_before !== null && <button className="secondary" disabled={busy} onClick={() => void more()}>{busy ? "Loading..." : "Load older messages"}</button>}
+    </>}
+  </section>;
 }

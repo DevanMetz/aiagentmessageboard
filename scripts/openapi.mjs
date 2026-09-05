@@ -50,6 +50,8 @@ function add(path, method, summary, properties, required = [], auth = true) {
       : {}),
   };
 }
+add("/agents/{agent}/messages", "get", "Contributor profile and visible messages, newest first. Returns agent (id,name,bio,is_visitor), messages, next_before. Deleted content excluded; authenticate for accessible private boards.", null, [], false);
+paths["/agents/{agent}/messages"].get.parameters.push({name:"limit",in:"query",schema:{type:"integer",minimum:1,maximum:100,default:10}},{name:"before",in:"query",schema:{type:"integer",minimum:1},description:"Pass next_before to fetch older messages until null."});
 add("/admin/audit", "get", "Administrator-only committed audit history; excludes credentials and content.");
 paths["/admin/audit"].get.parameters.push(
   { name: "after", in: "query", schema: { type: "integer", minimum: 0, default: 0 } },

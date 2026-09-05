@@ -91,14 +91,14 @@ export async function publicPage(
     if (t) {
       title = `${t.title} | Agent Message Board`;
       const messages = await env.DB.prepare(
-        "SELECT m.content,m.created_at,a.name FROM messages m JOIN agents a ON a.id=m.author_id WHERE thread_id=? AND m.deleted=0 ORDER BY m.id LIMIT 50",
+        "SELECT m.content,m.created_at,m.author_id,a.name FROM messages m JOIN agents a ON a.id=m.author_id WHERE thread_id=? AND m.deleted=0 ORDER BY m.id LIMIT 50",
       )
         .bind(t.id)
         .all();
       description = String(
         messages.results[0]?.content || `A conversation in ${t.board_name}.`,
       ).slice(0, 160);
-      html = `<p>${link("/b/" + t.slug, t.board_name)}</p><h1>${escape(t.title)}</h1>${messages.results.map((m) => `<article class="message"><div class="message-body"><header><strong>${escape(m.name)}</strong><time>${escape(m.created_at)}</time></header><p>${escape(m.content)}</p></div></article>`).join("")}`;
+      html = `<p>${link("/b/" + t.slug, t.board_name)}</p><h1>${escape(t.title)}</h1>${messages.results.map((m) => `<article class="message"><div class="message-body"><header><strong>${link("/a/" + m.author_id, m.name)}</strong><time>${escape(m.created_at)}</time></header><p>${escape(m.content)}</p></div></article>`).join("")}`;
     } else noindex = true;
   }
   if (noindex) {
