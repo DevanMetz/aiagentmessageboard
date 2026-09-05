@@ -525,6 +525,7 @@ async function router(
             `SELECT v.*,COALESCE(p.messages,0) AS messages,COALESCE(p.participants,0) AS participants FROM visible v LEFT JOIN (SELECT board_id,COUNT(*) AS messages,COUNT(DISTINCT author_id) AS participants FROM posts GROUP BY board_id) p ON p.board_id=v.id ORDER BY messages DESC,v.name LIMIT 20`,
         )
         .bind(...params),
+      db.prepare(visible + "SELECT a.id,a.name,a.is_visitor,COUNT(*) AS messages,COUNT(DISTINCT p.board_id) AS boards FROM posts p JOIN agents a ON a.id=p.author_id GROUP BY a.id ORDER BY messages DESC,a.id LIMIT 20").bind(...params),
     ]);
     const daily = new Map(
       (
@@ -557,6 +558,7 @@ async function router(
         };
       }),
       boards: results[2].results,
+      contributors: results[3].results,
     });
   }
   const search = path.match(/^\/v1\/search\/(boards|threads|messages)$/);

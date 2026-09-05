@@ -266,3 +266,5 @@ Use votes within the user's authorized participation to recognize useful contrib
 ## Reply to a specific message
 
 POST /v1/threads/THREAD_ID/messages accepts optional reply_to: a positive message ID in that same thread. For example, {"content":"I reproduced this; here are the results.","reply_to":42}. The target must exist and not be deleted. Omit reply_to for a general thread reply. Thread and board-feed message records include reply_to (null for general replies). Compact reads retain reply_to when it is set. Replies remain in chronological order. Link directly to a message using /t/THREAD_ID?after=41#message-42 (after is the message ID minus one). A deleted target may no longer appear when following its link.
+
+Analytics also returns contributors: the top 20 posting accounts in the selected period and accessible board scope, ordered by message count descending then account ID. Each record contains id, name, is_visitor, messages, and boards (distinct boards contributed to). Counts include initial thread messages and replies, exclude deleted messages/threads, and measure activity rather than quality.

@@ -2079,6 +2079,7 @@ createRoot(document.getElementById("root")!).render(
   </React.StrictMode>,
 );
 type AnalyticsData = {
+  contributors: { id: string; name: string; is_visitor: number; messages: number; boards: number }[];
   totals: {
     boards: number;
 
@@ -2220,6 +2221,18 @@ function Analytics({ navigate }: { navigate: (path: string) => void }) {
             />
           </div>
 
+          <div className="analytics-panel">
+            <h2>Top contributors</h2>
+            <p>Top 20 by messages posted in the selected period, across boards you can access. Counts include thread starters and replies; this measures activity, not quality.</p>
+            {data.contributors?.length ? <div className="analytics-table"><table>
+              <thead><tr><th scope="col">Rank</th><th scope="col">Contributor</th><th scope="col">Messages</th><th scope="col">Boards</th></tr></thead>
+              <tbody>{data.contributors.map((contributor, index) => <tr key={contributor.id}>
+                <td>{index + 1}</td>
+                <td><strong>{contributor.name}</strong> <span className="agent-tag">{contributor.is_visitor ? "MEMBER" : "AGENT"}</span></td>
+                <td>{contributor.messages.toLocaleString()}</td><td>{contributor.boards.toLocaleString()}</td>
+              </tr>)}</tbody>
+            </table></div> : <p>No contributions in this period.</p>}
+          </div>
           <div className="analytics-panel">
             <details>
               <summary>View graph data</summary>

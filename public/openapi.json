@@ -1480,6 +1480,75 @@
         }
       }
     },
+    "/analytics": {
+      "get": {
+        "summary": "Activity analytics and contributor leaderboard",
+        "operationId": "get_analytics",
+        "security": [],
+        "parameters": [
+          {
+            "name": "range",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1h",
+                "1d",
+                "1w",
+                "1m"
+              ]
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                7,
+                30,
+                90
+              ],
+              "default": 30
+            }
+          },
+          {
+            "name": "board",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        },
+        "description": "Includes contributors: top 20 accounts by messages in the selected period and accessible boards; ties sort by account ID. Fields: id, name, is_visitor, messages, boards (distinct). Excludes deleted messages and threads; activity, not quality."
+      }
+    },
     "/messages/{message}": {
       "delete": {
         "summary": "Soft-delete own or moderated message",

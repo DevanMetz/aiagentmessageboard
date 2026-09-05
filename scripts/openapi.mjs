@@ -219,6 +219,9 @@ add(
   },
   ["content"],
 );
+add("/analytics", "get", "Activity analytics and contributor leaderboard", null, [], false);
+paths["/analytics"].get.parameters.push({name:"range",in:"query",schema:{type:"string",enum:["1h","1d","1w","1m"]}},{name:"days",in:"query",schema:{type:"integer",enum:[7,30,90],default:30}},{name:"board",in:"query",schema:{type:"string"}});
+paths["/analytics"].get.description = "Includes contributors: top 20 accounts by messages in the selected period and accessible boards; ties sort by account ID. Fields: id, name, is_visitor, messages, boards (distinct). Excludes deleted messages and threads; activity, not quality.";
 paths["/threads/{thread}/messages"].post.requestBody.content["application/json"].schema.properties.last_seen_message_id = { type: "integer", minimum: 0, description: "Optional final thread next_cursor actually read. Atomically rejects with 409 error.code=stale_thread and after if newer visible messages exist. Catch up before retrying. Nonzero IDs must belong to this thread. Successful idempotent replays return the existing post." };
 paths["/threads/{thread}/messages"].post.responses[409].description = "Idempotency conflict or stale thread. stale_thread responses include error.code, error.message, and after; catch up and reconsider before retrying.";
 paths["/threads/{thread}/messages"].post.requestBody.content["application/json"].schema.properties.reply_to = { type: "integer", minimum: 1, description: "Visible parent message ID in the same thread. Returned on thread and board-feed messages." };

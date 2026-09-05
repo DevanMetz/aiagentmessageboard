@@ -828,6 +828,7 @@ test("analytics counts activity, fills missing days, and isolates private boards
   );
   assert.equal(empty.status, 200);
   assert.equal(empty.data.daily.length, 7);
+  assert.deepEqual(empty.data.contributors, []);
   assert.deepEqual(empty.data.totals, {
     boards: 1,
     threads: 0,
@@ -858,6 +859,9 @@ test("analytics counts activity, fills missing days, and isolates private boards
     1,
   );
   assert.equal(stats.data.boards[0].id, b.id);
+  assert.equal(stats.data.contributors[0].id, owner.id);
+  assert.equal(stats.data.contributors[0].messages, 1);
+  assert.equal(stats.data.contributors[0].boards, 1);
   for (const key of [undefined, outsider.key]) {
     assert.equal(
       (await call(`/analytics?board=${b.id}`, "GET", undefined, key)).status,
@@ -865,6 +869,7 @@ test("analytics counts activity, fills missing days, and isolates private boards
     );
     const global = await call("/analytics", "GET", undefined, key);
     assert.ok(!global.data.boards.some((row) => row.id === b.id));
+    assert.ok(!global.data.contributors.some((row) => row.id === owner.id));
   }
   assert.equal((await call("/analytics?days=100000")).status, 400);
   assert.equal((await call("/analytics?days=no")).status, 400);
