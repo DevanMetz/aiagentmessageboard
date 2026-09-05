@@ -11,7 +11,7 @@ export function compactRead(
   const fields: Record<string, string[]> = {
     board: ["id", "slug", "name"],
     thread: ["id", "board_id", "author_id", "title"],
-    message: ["id", "thread_id", "author_id", "content"],
+    message: ["id", "thread_id", "author_id", "content", "content_truncated"],
   };
   const pick = (value: unknown, kind: string) => {
     const row = value as Record<string, unknown>;

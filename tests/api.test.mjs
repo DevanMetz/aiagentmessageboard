@@ -499,7 +499,8 @@ test("search paginates and protects private and deleted content", async () => {
   assert.equal(page.data.messages[0].id, reply.data.message.id);
   assert.equal(page.data.next_offset, 1);
   const next = await call(path + "&offset=1", "GET", undefined, owner.key);
-  assert.deepEqual(next.data.messages[0].metadata, { found: true });
+  assert.ok(!("metadata" in next.data.messages[0]));
+  assert.equal(next.data.messages[0].content_truncated, false);
   assert.equal(next.data.next_offset, null);
   await call(
     `/messages/${reply.data.message.id}`,
@@ -524,6 +525,86 @@ test("search paginates and protects private and deleted content", async () => {
   assert.equal((await call("/search/boards?q=%25")).data.boards.length, 0);
 });
 
+test("search ranks unordered words, supports exact phrases and groups visible matches by thread", async () => {
+  const a = await agent(), outsider = await agent(), b = await makeBoard(a);
+  const term = "rank" + randomUUID().replaceAll("-", "");
+  await call(`/boards/${b.id}`, "PATCH", { name: `${term} database`, description: "retries" }, a.key);
+  const short = await call(`/boards/${b.id}/threads`, "POST", { title: `${term} database retries`, content: `${term} database retries` }, a.key);
+  const long = await call(`/boards/${b.id}/threads`, "POST", { title: `${term} retries for database requests`, content: `${term} retries for database requests ` + "context ".repeat(100) }, a.key);
+  const reply = await call(`/threads/${short.data.thread.id}/messages`, "POST", { content: `${term} database retries` }, a.key);
+  const query = encodeURIComponent(`${term} database retries`);
+  const get = (kind, extra = "", key = a.key) => call(`/search/${kind}?q=${query}&board=${b.id}${extra}`, "GET", undefined, key);
+  assert.equal((await get("boards")).data.boards.length, 1, "words can match different board fields");
+  assert.equal((await get("boards", "&mode=phrase")).data.boards.length, 0);
+  assert.equal((await get("threads")).data.threads[0].id, short.data.thread.id);
+  assert.equal((await get("threads")).data.threads.length, 2, "word order is irrelevant");
+  assert.equal((await get("threads", "&mode=phrase")).data.threads.length, 1);
+  const ranked = await get("messages");
+  assert.equal(ranked.data.messages.length, 3);
+  assert.equal(ranked.data.messages[0].thread_id, short.data.thread.id);
+  assert.equal(ranked.data.messages[2].thread_id, long.data.thread.id, "relevance outranks recency");
+  assert.equal((await get("messages", "&mode=phrase")).data.messages.length, 2);
+  assert.equal((await get("messages", "&sort=recent")).data.messages[0].id, reply.data.message.id);
+  const first = await get("messages", "&group=thread&limit=1&compact=1");
+  assert.equal(first.data.messages[0].thread_id, short.data.thread.id);
+  assert.equal(first.data.next_offset, 1);
+  const second = await get("messages", "&group=thread&limit=1&offset=1");
+  assert.equal(second.data.messages[0].thread_id, long.data.thread.id);
+  assert.equal(second.data.next_offset, null);
+  assert.ok(!("position" in second.data.messages[0]));
+  assert.ok(Array.from(second.data.messages[0].content).length <= 100);
+  assert.equal(second.data.messages[0].content_truncated, true);
+  assert.equal((await get("messages", "&group=thread", outsider.key)).status, 404);
+  await call(`/messages/${reply.data.message.id}`, "DELETE", undefined, a.key);
+  assert.notEqual((await get("messages", "&group=thread")).data.messages[0].id, reply.data.message.id);
+  await call(`/threads/${short.data.thread.id}`, "DELETE", undefined, a.key);
+  assert.equal((await get("messages", "&group=thread")).data.messages.length, 1);
+  const tail = await call(`/threads/${long.data.thread.id}/messages`, "POST", {
+    content: "x".repeat(3500) + ` ${term} database retries 🧠`, metadata: { large: "z".repeat(3000) },
+  }, a.key);
+  assert.equal(tail.status, 201);
+  const excerpt = (await get("messages", "&sort=recent&compact=1")).data.messages[0];
+  assert.ok(Array.from(excerpt.content).length <= 100);
+  assert.ok(excerpt.content.includes(term), "long tokens must not push matches outside the excerpt");
+  assert.equal(excerpt.content_truncated, true);
+  assert.ok(!("metadata" in excerpt));
+  const expanded = (await get("messages", "&sort=recent&max_chars=5000")).data.messages[0];
+  assert.ok(expanded.content.length > 3500);
+  assert.equal(expanded.content_truncated, false);
+  assert.ok(Array.from((await get("messages", "&group=thread&compact=1&max_chars=25")).data.messages[0].content).length <= 25);
+  for (const value of ["0", "5001", "1.5", "nope", ""])
+    assert.equal((await get("messages", "&max_chars=" + value)).status, 400);
+  assert.equal((await get("threads", "&max_chars=100")).status, 400);
+  const fullThread = (await call(`/threads/${long.data.thread.id}`, "GET", undefined, a.key)).data;
+  assert.ok(fullThread.messages.some(m => m.id === tail.data.message.id && m.content.length > 3500 && m.metadata.large.length === 3000));
+  for (const extra of ["&mode=bad", "&sort=bad", "&group=bad"])
+    assert.equal((await get("messages", extra)).status, 400);
+  assert.equal((await get("threads", "&group=thread")).status, 400);
+  for (const q of ['" OR *', "café", "数据库", "!!!"])
+    assert.equal((await call(`/search/messages?q=${encodeURIComponent(q)}&group=thread`, "GET", undefined, a.key)).status, 200);
+});
+test("new threads and replies enforce the 5000-character content boundary", async () => {
+  const a = await agent();
+  const created = await call("/boards/general/threads", "POST", { title: "Length boundary", content: "a".repeat(5000) }, a.key);
+  assert.equal(created.status, 201);
+  assert.equal((await call("/boards/general/threads", "POST", { title: "Too long", content: "a".repeat(5001) }, a.key)).status, 400);
+  const path = `/threads/${created.data.thread.id}/messages`;
+  assert.equal((await call(path, "POST", { content: "b".repeat(5000) }, a.key)).status, 201);
+  assert.equal((await call(path, "POST", { content: "b".repeat(5001) }, a.key)).status, 400);
+});
+test("search defaults to ten results with explicit pagination and a maximum of 100", async () => {
+  const a = await agent(), term = "page" + randomUUID().replaceAll("-", "");
+  for (let i = 0; i < 11; i++) {
+    assert.equal((await call("/boards", "POST", { name: `${term} ${i}`, description: "Search pagination", visibility: "public" }, a.key)).status, 201);
+  }
+  const path = `/search/boards?q=${term}`;
+  const first = await call(path, "GET", undefined, a.key);
+  assert.equal(first.data.boards.length, 10);
+  assert.equal(first.data.next_offset, 10);
+  assert.equal((await call(path + "&offset=10", "GET", undefined, a.key)).data.boards.length, 1);
+  assert.equal((await call(path + "&limit=100", "GET", undefined, a.key)).data.boards.length, 11);
+  assert.equal((await call(path + "&limit=101", "GET", undefined, a.key)).status, 400);
+});
 test("board addresses are generated from names and distinguish duplicate names", async () => {
   const a = await agent();
   const create = (name) =>

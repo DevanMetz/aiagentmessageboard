@@ -265,8 +265,8 @@ function cursor(url: URL) {
     fail(400, "Invalid message cursor.");
   return Number(v);
 }
-function pageSize(url: URL) {
-  const v = Number(url.searchParams.get("limit") || 50);
+function pageSize(url: URL, defaultSize = 50) {
+  const v = Number(url.searchParams.get("limit") || defaultSize);
   if (!Number.isInteger(v) || v < 1 || v > 100)
     fail(400, "limit must be between 1 and 100.");
   return v;
@@ -563,66 +563,73 @@ async function router(
   if (search && method === "GET") {
     const q = (url.searchParams.get("q") || "").trim();
     if (!q || q.length > 100) fail(400, "q must be 1–100 characters.");
-    const size = pageSize(url);
+    const size = pageSize(url, 10);
     const offset = Number(url.searchParams.get("offset") || 0);
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000)
       fail(400, "Invalid offset.");
     const selected = url.searchParams.get("board");
     const selectedBoard = selected ? await board(db, selected, a) : null;
     const kind = search[1];
-    if (!/[\p{L}\p{N}]/u.test(q))
-      return json({ [kind]: [], next_offset: null });
-    const phrase = '"' + q.replace(/"/g, '""') + '"';
-    const queries: Record<
-      string,
-      { select: string; from: string; filter: string; order: string }
-    > = {
+    const maxChars = Number(url.searchParams.get("max_chars") ?? 100);
+    if (!Number.isSafeInteger(maxChars) || maxChars < 1 || maxChars > 5000) fail(400, "max_chars must be between 1 and 5000.");
+    if (kind !== "messages" && url.searchParams.has("max_chars")) fail(400, "max_chars is only supported for message search.");
+    const mode = url.searchParams.get("mode") || "all";
+    const sort = url.searchParams.get("sort") || "relevance";
+    const group = url.searchParams.get("group") || "none";
+    if (!["all", "phrase"].includes(mode)) fail(400, "mode must be all or phrase.");
+    if (!["relevance", "recent"].includes(sort)) fail(400, "sort must be relevance or recent.");
+    if (!["none", "thread"].includes(group) || (group === "thread" && kind !== "messages"))
+      fail(400, "group=thread is only supported for message search.");
+    const words = q.match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu) || [];
+    if (!words.length) return json({ [kind]: [], next_offset: null });
+    const quote = (value: string) => '"' + value.replace(/"/g, '""') + '"';
+    const expression = mode === "phrase" ? quote(q) : [...new Set(words)].map(quote).join(" AND ");
+    const markStart = crypto.randomUUID(), markEnd = crypto.randomUUID();
+    const queries: Record<string, { select: string; from: string; filter: string; index: string; weights: string; recent: string }> = {
       boards: {
-        select: "b.id,b.slug,b.name,b.description,b.visibility,b.created_at",
-        from: "boards b",
-        filter:
-          "b.rowid IN (SELECT rowid FROM board_search WHERE board_search MATCH ?)",
-        order: "b.created_at DESC,b.id",
+        select: "b.id AS id,b.slug,b.name,b.description,b.visibility,b.created_at",
+        from: "board_search JOIN boards b ON b.rowid=board_search.rowid",
+        filter: "1=1", index: "board_search", weights: ",5,3,1", recent: "created_at DESC,id",
       },
       threads: {
-        select:
-          "t.id,t.board_id,t.title,t.author_id,t.created_at,t.updated_at,b.slug board_slug,a.name author_name",
-        from: "threads t JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=t.author_id",
-        filter:
-          "t.deleted=0 AND t.rowid IN (SELECT rowid FROM thread_search WHERE thread_search MATCH ?)",
-        order: "t.updated_at DESC,t.id",
+        select: "t.id AS id,t.board_id,t.title,t.author_id,t.created_at,t.updated_at,b.slug board_slug,a.name author_name",
+        from: "thread_search JOIN threads t ON t.rowid=thread_search.rowid JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=t.author_id",
+        filter: "t.deleted=0", index: "thread_search", weights: "", recent: "updated_at DESC,id",
       },
       messages: {
-        select:
-          "m.id,m.thread_id,m.author_id,m.content,m.metadata,m.created_at,t.board_id,t.title thread_title,b.slug board_slug,a.name author_name",
-        from: "messages m JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=m.author_id",
-        filter:
-          "m.deleted=0 AND t.deleted=0 AND m.id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?)",
-        order: "m.id DESC",
+        select: `m.id AS id,m.thread_id,m.author_id,snippet(message_search,0,'${markStart}','${markEnd}',' … ',64) AS content,m.content IS NOT snippet(message_search,0,'','',' … ',64) AS content_truncated,m.created_at,t.board_id,t.title thread_title,b.slug board_slug,a.name author_name`,
+        from: "message_search JOIN messages m ON m.id=message_search.rowid JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=m.author_id",
+        filter: "m.deleted=0 AND t.deleted=0", index: "message_search", weights: "", recent: "id DESC",
       },
     };
     const query = queries[kind];
-    const rows = await db
-      .prepare(
-        `SELECT ${query.select} FROM ${query.from}
+    const matched = `SELECT ${query.select},bm25(${query.index}${query.weights}) AS relevance FROM ${query.from}
        WHERE (b.visibility='public' OR ?=1 OR EXISTS(
          SELECT 1 FROM memberships access WHERE access.board_id=b.id AND access.agent_id=? AND access.status='active'))
-       AND (?='' OR b.id=?) AND ${query.filter}
-       ORDER BY ${query.order} LIMIT ? OFFSET ?`,
-      )
-      .bind(
-        a?.is_admin || 0,
-        a?.id || "",
-        selectedBoard?.id || "",
-        selectedBoard?.id || "",
-        phrase,
-        size + 1,
-        offset,
-      )
-      .all();
-    const items = rows.results.slice(0, size);
+       AND (?='' OR b.id=?) AND ${query.filter} AND ${query.index} MATCH ?`;
+    const order = (sort === "relevance" ? "relevance," : "") + query.recent;
+    // Materialize BM25 before the window function; filter access and deletion
+    // before grouping so hidden messages cannot select the representative.
+    const sql = group === "thread"
+      ? `WITH matched AS MATERIALIZED (${matched}), grouped AS (
+          SELECT *,ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY relevance,id DESC) AS position FROM matched
+        ) SELECT * FROM grouped WHERE position=1 ORDER BY ${order} LIMIT ? OFFSET ?`
+      : `${matched} ORDER BY ${order} LIMIT ? OFFSET ?`;
+    const rows = await db.prepare(sql).bind(
+      a?.is_admin || 0, a?.id || "", selectedBoard?.id || "", selectedBoard?.id || "",
+      expression, size + 1, offset,
+    ).all();
+    const items = rows.results.slice(0, size).map(({ relevance, position, ...item }) => item);
     return json({
-      [kind]: kind === "messages" ? items.map(publicMessage) : items,
+      [kind]: kind === "messages" ? items.map(item => {
+        const marked = String(item.content);
+        const firstMatch = marked.indexOf(markStart);
+        const clean = marked.replaceAll(markStart, "").replaceAll(markEnd, "");
+        const chars = Array.from(clean);
+        const matchAt = Array.from(marked.slice(0, Math.max(0, firstMatch))).length;
+        const start = chars.length > maxChars ? Math.min(Math.max(0, matchAt - Math.min(100, Math.floor(maxChars / 4))), chars.length - maxChars) : 0;
+        return { ...item, content: chars.slice(start, start + maxChars).join(""), content_truncated: !!item.content_truncated || chars.length > maxChars };
+      }) : items,
       next_offset: rows.results.length > size ? offset + size : null,
     });
   }
@@ -966,7 +973,7 @@ async function router(
       await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
         title = text(input, "title", 3, 160),
-        content = text(input, "content", 1, 16000),
+        content = text(input, "content", 1, 5000),
         metadata = meta(input),
         tid = crypto.randomUUID();
       const idem = req.headers.get("idempotency-key");
@@ -1078,7 +1085,7 @@ async function router(
       await limit(db, "messages-day:" + me.id, 1000, 86400);
       await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
-        content = text(input, "content", 1, 16000),
+        content = text(input, "content", 1, 5000),
         metadata = meta(input),
         idem = req.headers.get("idempotency-key");
       if (idem && idem.length > 128) fail(400, "Idempotency key too long.");
@@ -1257,7 +1264,7 @@ export default {
       )
         fail(429, "Search and analytics are limited to 30 requests/minute/IP.", 60);
       const cacheKey = new Request(url.toString());
-      const cache = await caches.open("public-api-v1");
+      const cache = await caches.open("public-api-v2");
       let res = cacheable ? await cache.match(cacheKey) : undefined;
       const cacheHit = !!res;
       if (!res) {

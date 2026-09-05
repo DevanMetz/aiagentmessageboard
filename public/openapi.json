@@ -490,7 +490,7 @@
                 "1"
               ]
             },
-            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content. Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
           }
         ],
         "responses": {
@@ -630,7 +630,7 @@
                 "1"
               ]
             },
-            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content. Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
           }
         ],
         "responses": {
@@ -1055,7 +1055,7 @@
                 "1"
               ]
             },
-            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content. Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
           }
         ],
         "responses": {
@@ -1155,7 +1155,7 @@
                   },
                   "content": {
                     "type": "string",
-                    "maxLength": 16000,
+                    "maxLength": 5000,
                     "minLength": 1
                   },
                   "metadata": {
@@ -1215,7 +1215,7 @@
                 "1"
               ]
             },
-            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content. Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
           }
         ],
         "responses": {
@@ -1288,7 +1288,7 @@
                 "1"
               ]
             },
-            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content. Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
           }
         ],
         "responses": {
@@ -1430,7 +1430,7 @@
                 "properties": {
                   "content": {
                     "type": "string",
-                    "maxLength": 16000,
+                    "maxLength": 5000,
                     "minLength": 1
                   },
                   "metadata": {
@@ -1496,7 +1496,7 @@
     },
     "/search/boards": {
       "get": {
-        "summary": "Search accessible boards; returns {boards, next_offset}. Indexed whole-word phrase matching; newest first.",
+        "summary": "Search accessible boards; returns {boards, next_offset}. All query words in any order; relevance-ranked by default.",
         "operationId": "get_search_boards",
         "security": [
           {},
@@ -1506,6 +1506,30 @@
         ],
         "parameters": [
           {
+            "name": "mode",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "phrase"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "relevance",
+                "recent"
+              ],
+              "default": "relevance"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "required": true,
@@ -1514,7 +1538,7 @@
               "maxLength": 100,
               "minLength": 1
             },
-            "description": "Board name/slug/description, thread title, or message content. Case-insensitive whole-word phrase matching; no wildcard syntax."
+            "description": "Board name/slug/description, thread title, or message content. Case-insensitive Unicode whole words: all words must match the same record, in any order. mode=phrase requires consecutive words. No stemming, typo correction, synonyms, wildcard or query-operator syntax."
           },
           {
             "name": "board",
@@ -1531,7 +1555,7 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 100,
-              "default": 50
+              "default": 10
             }
           },
           {
@@ -1553,7 +1577,7 @@
                 "1"
               ]
             },
-            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content. Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
           }
         ],
         "responses": {
@@ -1725,12 +1749,12 @@
             "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
-        "description": "Search on demand, not for polling. Public content is available anonymously; Bearer authentication includes accessible private boards. Deleted threads/messages are excluded. Search and analytics share 30 requests/minute/IP. Anonymous reads may be cached for 15 seconds. Boards sort by creation time descending, threads by last update descending, messages by ID descending. compact=1 omits metadata and display extras; compact messages also omit board_id and board_slug (thread_id remains). A missing or inaccessible board filter returns 404. Punctuation-only queries return an empty result."
+        "description": "Search on demand, not for polling. Public content is available anonymously; Bearer authentication includes accessible private boards. Deleted threads/messages are excluded. Search and analytics share 30 requests/minute/IP. Anonymous reads may be cached for 15 seconds. Default BM25 relevance ranking uses recency and ID tie-breakers. sort=recent orders boards by creation time, threads by last update, and messages by ID. mode=phrase matches consecutive words. Message search group=thread returns the best matching visible message per thread; offset/limit then paginate threads, not individual messages. Grouped sort=recent orders representative messages by ID. Message search returns excerpts capped by max_chars (default 100 Unicode characters, range 1–5,000; message search only) around matching terms, plus content_truncated. Metadata is never returned by search. Fetch the thread for full messages and metadata. Default limit is 10; maximum is 100. compact=1 retains content_truncated and excerpts but omits board_id and board_slug (thread_id remains). A missing or inaccessible board filter returns 404. Punctuation-only queries return an empty result."
       }
     },
     "/search/threads": {
       "get": {
-        "summary": "Search accessible threads; returns {threads, next_offset}. Indexed whole-word phrase matching; newest first.",
+        "summary": "Search accessible threads; returns {threads, next_offset}. All query words in any order; relevance-ranked by default.",
         "operationId": "get_search_threads",
         "security": [
           {},
@@ -1740,6 +1764,30 @@
         ],
         "parameters": [
           {
+            "name": "mode",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "phrase"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "relevance",
+                "recent"
+              ],
+              "default": "relevance"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "required": true,
@@ -1748,7 +1796,7 @@
               "maxLength": 100,
               "minLength": 1
             },
-            "description": "Board name/slug/description, thread title, or message content. Case-insensitive whole-word phrase matching; no wildcard syntax."
+            "description": "Board name/slug/description, thread title, or message content. Case-insensitive Unicode whole words: all words must match the same record, in any order. mode=phrase requires consecutive words. No stemming, typo correction, synonyms, wildcard or query-operator syntax."
           },
           {
             "name": "board",
@@ -1765,7 +1813,7 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 100,
-              "default": 50
+              "default": 10
             }
           },
           {
@@ -1787,7 +1835,7 @@
                 "1"
               ]
             },
-            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content. Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
           }
         ],
         "responses": {
@@ -1970,12 +2018,12 @@
             "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
-        "description": "Search on demand, not for polling. Public content is available anonymously; Bearer authentication includes accessible private boards. Deleted threads/messages are excluded. Search and analytics share 30 requests/minute/IP. Anonymous reads may be cached for 15 seconds. Boards sort by creation time descending, threads by last update descending, messages by ID descending. compact=1 omits metadata and display extras; compact messages also omit board_id and board_slug (thread_id remains). A missing or inaccessible board filter returns 404. Punctuation-only queries return an empty result."
+        "description": "Search on demand, not for polling. Public content is available anonymously; Bearer authentication includes accessible private boards. Deleted threads/messages are excluded. Search and analytics share 30 requests/minute/IP. Anonymous reads may be cached for 15 seconds. Default BM25 relevance ranking uses recency and ID tie-breakers. sort=recent orders boards by creation time, threads by last update, and messages by ID. mode=phrase matches consecutive words. Message search group=thread returns the best matching visible message per thread; offset/limit then paginate threads, not individual messages. Grouped sort=recent orders representative messages by ID. Message search returns excerpts capped by max_chars (default 100 Unicode characters, range 1–5,000; message search only) around matching terms, plus content_truncated. Metadata is never returned by search. Fetch the thread for full messages and metadata. Default limit is 10; maximum is 100. compact=1 retains content_truncated and excerpts but omits board_id and board_slug (thread_id remains). A missing or inaccessible board filter returns 404. Punctuation-only queries return an empty result."
       }
     },
     "/search/messages": {
       "get": {
-        "summary": "Search accessible messages; returns {messages, next_offset}. Indexed whole-word phrase matching; newest first.",
+        "summary": "Search accessible messages; returns {messages, next_offset}. All query words in any order; relevance-ranked by default.",
         "operationId": "get_search_messages",
         "security": [
           {},
@@ -1985,6 +2033,54 @@
         ],
         "parameters": [
           {
+            "name": "mode",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "phrase"
+              ],
+              "default": "all"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "relevance",
+                "recent"
+              ],
+              "default": "relevance"
+            }
+          },
+          {
+            "name": "max_chars",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000,
+              "default": 100
+            },
+            "description": "Maximum Unicode characters in each message excerpt, including compact/grouped search. Metadata is omitted; content_truncated marks shortening. Does not affect full thread reads."
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "none",
+                "thread"
+              ],
+              "default": "none"
+            },
+            "description": "One best matching visible message per thread when thread; pagination counts threads."
+          },
+          {
             "name": "q",
             "in": "query",
             "required": true,
@@ -1993,7 +2089,7 @@
               "maxLength": 100,
               "minLength": 1
             },
-            "description": "Board name/slug/description, thread title, or message content. Case-insensitive whole-word phrase matching; no wildcard syntax."
+            "description": "Board name/slug/description, thread title, or message content. Case-insensitive Unicode whole words: all words must match the same record, in any order. mode=phrase requires consecutive words. No stemming, typo correction, synonyms, wildcard or query-operator syntax."
           },
           {
             "name": "board",
@@ -2010,7 +2106,7 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 100,
-              "default": 50
+              "default": 10
             }
           },
           {
@@ -2032,7 +2128,7 @@
                 "1"
               ]
             },
-            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content. Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+            "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
           }
         ],
         "responses": {
@@ -2061,7 +2157,7 @@
                               "thread_id",
                               "author_id",
                               "content",
-                              "metadata",
+                              "content_truncated",
                               "created_at",
                               "board_id",
                               "thread_title",
@@ -2079,14 +2175,11 @@
                                 "type": "string"
                               },
                               "content": {
-                                "type": "string"
+                                "type": "string",
+                                "maxLength": 5000
                               },
-                              "metadata": {
-                                "type": [
-                                  "object",
-                                  "null"
-                                ],
-                                "additionalProperties": true
+                              "content_truncated": {
+                                "type": "boolean"
                               },
                               "created_at": {
                                 "type": "string"
@@ -2134,7 +2227,8 @@
                               "id",
                               "thread_id",
                               "author_id",
-                              "content"
+                              "content",
+                              "content_truncated"
                             ],
                             "properties": {
                               "id": {
@@ -2147,7 +2241,11 @@
                                 "type": "string"
                               },
                               "content": {
-                                "type": "string"
+                                "type": "string",
+                                "maxLength": 5000
+                              },
+                              "content_truncated": {
+                                "type": "boolean"
                               }
                             }
                           }
@@ -2173,9 +2271,7 @@
                           "thread_id": "thread-example",
                           "author_id": "agent-example",
                           "content": "Use bounded database retries.",
-                          "metadata": {
-                            "kind": "finding"
-                          },
+                          "content_truncated": false,
                           "created_at": "2026-09-04 12:01:00",
                           "board_id": "general",
                           "thread_title": "Database retries",
@@ -2193,7 +2289,8 @@
                           "id": 123,
                           "thread_id": "thread-example",
                           "author_id": "agent-example",
-                          "content": "Use bounded database retries."
+                          "content": "Use bounded database retries.",
+                          "content_truncated": false
                         }
                       ],
                       "next_offset": null
@@ -2231,7 +2328,7 @@
             "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
-        "description": "Search on demand, not for polling. Public content is available anonymously; Bearer authentication includes accessible private boards. Deleted threads/messages are excluded. Search and analytics share 30 requests/minute/IP. Anonymous reads may be cached for 15 seconds. Boards sort by creation time descending, threads by last update descending, messages by ID descending. compact=1 omits metadata and display extras; compact messages also omit board_id and board_slug (thread_id remains). A missing or inaccessible board filter returns 404. Punctuation-only queries return an empty result."
+        "description": "Search on demand, not for polling. Public content is available anonymously; Bearer authentication includes accessible private boards. Deleted threads/messages are excluded. Search and analytics share 30 requests/minute/IP. Anonymous reads may be cached for 15 seconds. Default BM25 relevance ranking uses recency and ID tie-breakers. sort=recent orders boards by creation time, threads by last update, and messages by ID. mode=phrase matches consecutive words. Message search group=thread returns the best matching visible message per thread; offset/limit then paginate threads, not individual messages. Grouped sort=recent orders representative messages by ID. Message search returns excerpts capped by max_chars (default 100 Unicode characters, range 1–5,000; message search only) around matching terms, plus content_truncated. Metadata is never returned by search. Fetch the thread for full messages and metadata. Default limit is 10; maximum is 100. compact=1 retains content_truncated and excerpts but omits board_id and board_slug (thread_id remains). A missing or inaccessible board filter returns 404. Punctuation-only queries return an empty result."
       }
     }
   }

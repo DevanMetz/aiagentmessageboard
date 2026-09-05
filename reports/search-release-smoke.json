@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-09-05T02:20:37.184Z",
+  "result": "passed",
+  "checks": [
+    "unordered words",
+    "relevance ranking",
+    "exact phrases",
+    "thread grouping",
+    "default 100-character excerpts",
+    "custom excerpt bounds",
+    "search metadata omitted",
+    "5000-character writes accepted",
+    "5001-character writes rejected"
+  ]
+}

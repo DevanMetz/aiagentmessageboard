@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-05T01:55:42.692Z",
+  "generated_at": "2026-09-05T02:19:40.340Z",
   "environment": "local Cloudflare workerd/D1 emulator; not production capacity certification",
   "fixture": {
     "agents": 1000,
@@ -38,135 +38,135 @@
   "stages": [
     {
       "agents": 100,
-      "elapsed_seconds": 29.9354478,
+      "elapsed_seconds": 29.9560616,
       "requests": 100,
       "errors": 0,
       "statuses": {
         "200": 95,
         "201": 5
       },
-      "p50_ms": 14.89379999999801,
-      "p95_ms": 38.150699999998324,
-      "p99_ms": 498.6274000000012,
-      "cache_hits": 64,
+      "p50_ms": 16.60689999999886,
+      "p95_ms": 133.59169999999722,
+      "p99_ms": 545.2744999999995,
+      "cache_hits": 60,
       "slowest": [
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 498.6274000000012
+          "ms": 545.2744999999995
         },
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 460.55229999999574
+          "ms": 511.9959000000017
         },
         {
           "path": "/v1/threads/load-thread-1/messages",
           "status": 201,
-          "ms": 205.72130000000107
+          "ms": 239.70479999999952
         },
         {
           "path": "/v1/threads/load-thread-1/messages",
           "status": 201,
-          "ms": 151.7882000000027
+          "ms": 223.01230000000214
         },
         {
-          "path": "/v1/search/messages?q=observation%2099999",
+          "path": "/v1/search/messages?q=distributed%20planning&group=thread&board=load-board-1&limit=5",
           "status": 200,
-          "ms": 38.150699999998324
+          "ms": 133.59169999999722
         }
       ],
-      "d1_rows_read": 2008360,
-      "d1_rows_written": 206,
-      "conservative_estimated_usd": 0.002820360000000053
+      "d1_rows_read": 2818423,
+      "d1_rows_written": 210,
+      "conservative_estimated_usd": 0.0036344230000000446
     },
     {
       "agents": 500,
-      "elapsed_seconds": 30.172725600000007,
+      "elapsed_seconds": 30.18740039999999,
       "requests": 500,
       "errors": 0,
       "statuses": {
         "200": 475,
         "201": 25
       },
-      "p50_ms": 13.708699999995588,
-      "p95_ms": 33.06960000000254,
-      "p99_ms": 386.44830000000366,
-      "cache_hits": 344,
+      "p50_ms": 15.043900000004214,
+      "p95_ms": 56.92569999999978,
+      "p99_ms": 546.9147000000012,
+      "cache_hits": 340,
       "slowest": [
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 484.33729999999923
+          "ms": 629.7795999999944
         },
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 476.0237999999954
+          "ms": 614.1686000000045
         },
         {
           "path": "/v1/threads/load-thread-1/messages",
           "status": 201,
-          "ms": 436.67200000000594
+          "ms": 589.2056999999986
         },
         {
           "path": "/v1/threads/load-thread-1/messages",
           "status": 201,
-          "ms": 425.75530000000435
+          "ms": 587.4745000000112
         },
         {
-          "path": "/v1/boards/load-board-1/messages?after=100001",
+          "path": "/v1/search/messages?q=distributed%20planning&group=thread&board=load-board-1&limit=5",
           "status": 200,
-          "ms": 386.44830000000366
+          "ms": 546.9147000000012
         }
       ],
-      "d1_rows_read": 2014003,
-      "d1_rows_written": 974,
-      "conservative_estimated_usd": 0.00599400299999996
+      "d1_rows_read": 2824084,
+      "d1_rows_written": 978,
+      "conservative_estimated_usd": 0.00680808399999982
     },
     {
       "agents": 1000,
-      "elapsed_seconds": 30.222077300000006,
+      "elapsed_seconds": 30.2119102,
       "requests": 1000,
       "errors": 0,
       "statuses": {
         "200": 950,
         "201": 50
       },
-      "p50_ms": 13.951400000005378,
-      "p95_ms": 77.28209999999672,
-      "p99_ms": 443.68670000000566,
-      "cache_hits": 694,
+      "p50_ms": 15.539400000008754,
+      "p95_ms": 127.64530000000377,
+      "p99_ms": 603.0030000000115,
+      "cache_hits": 690,
       "slowest": [
         {
           "path": "/v1/analytics?range=1d",
           "status": 200,
-          "ms": 503.18270000000484
+          "ms": 693.2954999999929
         },
         {
-          "path": "/v1/analytics?range=1d",
+          "path": "/v1/threads/load-thread-1/messages",
+          "status": 201,
+          "ms": 679.6778999999951
+        },
+        {
+          "path": "/v1/search/messages?q=distributed%20planning&group=thread&board=load-board-1&limit=5",
           "status": 200,
-          "ms": 490.28889999999956
-        },
-        {
-          "path": "/v1/threads/load-thread-1/messages",
-          "status": 201,
-          "ms": 487.97619999999006
-        },
-        {
-          "path": "/v1/threads/load-thread-1/messages",
-          "status": 201,
-          "ms": 474.2606000000087
+          "ms": 635.4766999999993
         },
         {
           "path": "/v1/boards/load-board-1/messages?after=100001",
           "status": 200,
-          "ms": 457.4631999999983
+          "ms": 618.0080000000016
+        },
+        {
+          "path": "/v1/search/messages?q=observation%2099999&mode=phrase",
+          "status": 200,
+          "ms": 616.3508000000002
         }
       ],
-      "d1_rows_read": 2039435,
-      "d1_rows_written": 1886,
-      "conservative_estimated_usd": 0.009931434999999468
+      "d1_rows_read": 2849515,
+      "d1_rows_written": 1894,
+      "conservative_estimated_usd": 0.01074951499999953
     }
   ]
 }

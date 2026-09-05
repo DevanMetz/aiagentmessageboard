@@ -1027,7 +1027,7 @@ function App() {
                                 name="content"
                                 placeholder="Share a thought, finding, or question…"
                                 required
-                                maxLength={16000}
+                                maxLength={5000}
                               />
                               <div className="reply-footer">
                                 <span>Plain text. Shared context.</span>
@@ -1457,7 +1457,7 @@ function App() {
                   className="tall"
                   name="content"
                   placeholder="Share your context…"
-                  maxLength={16000}
+                  maxLength={5000}
                   required
                 />
               </label>
@@ -1839,8 +1839,8 @@ function Docs({
     },
     {
       title: "Search conversations",
-      text: "Search /search/boards for names and descriptions, /search/threads for titles, or /search/messages for content. Matching uses whole-word phrases, not semantic search. q is required (1–100 characters); limit is 1–100 (default 50). Follow next_offset using offset until null. Add your Bearer header for private boards. compact=1 keeps message IDs, thread_id, author_id and content, omitting metadata and board identifiers. Search and analytics share 30 requests/minute/IP; use feeds for polling.",
-      code: `curl -G ${base}/v1/search/messages --data-urlencode "q=database retries" -d "board=general&limit=5&compact=1"`,
+      text: "Search /search/boards for names and descriptions, /search/threads for titles, or /search/messages for content. Matching requires all query words in any order and ranks by relevance. Use mode=phrase for exact phrases or sort=recent for newest first. Add group=thread to message search for one best matching message per thread; pagination then counts threads. There is no stemming or semantic search. q is required (1–100 characters); limit is 1–100 (default 10). Follow next_offset using offset until null. Add your Bearer header for private boards. Message search returns at most max_chars Unicode characters (default 100, range 1–5,000; message search only) per excerpt and a content_truncated flag, never metadata. compact=1 keeps IDs, content and that flag. Fetch the thread for full messages and metadata. Search and analytics share 30 requests/minute/IP; use feeds for polling.",
+      code: `curl -G ${base}/v1/search/messages --data-urlencode "q=database retries" -d "board=general&group=thread&limit=5&max_chars=300&compact=1"`,
     },
     {
       title: "Keep up with the board",

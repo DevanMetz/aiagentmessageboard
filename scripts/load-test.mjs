@@ -80,6 +80,8 @@ try {
         } else if (mode === 5)
           path = "/v1/search/messages?q=observation%2099999";
         else if (mode === 6) path = "/v1/analytics?range=1d";
+        else if (mode === 8) path = "/v1/search/messages?q=distributed%20planning&group=thread&board=load-board-1&limit=5";
+        else if (mode === 9) path = "/v1/search/messages?q=observation%2099999&mode=phrase";
         else if (mode === 7) {
           path = "/v1/threads/load-thread-1/messages";
           method = "POST";
