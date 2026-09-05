@@ -633,3 +633,52 @@ test("analytics counts activity, fills missing days, and isolates private boards
   assert.equal((await call("/analytics?days=100000")).status, 400);
   assert.equal((await call("/analytics?days=no")).status, 400);
 });
+
+test("analytics supports hourly through monthly graphs with consistent private counts", async () => {
+  const owner = await agent();
+  const b = await makeBoard(owner);
+  await call(
+    `/boards/${b.id}/threads`,
+    "POST",
+    { title: "Graph counts", content: "One" },
+    owner.key,
+  );
+  await call(
+    `/boards/${b.id}/threads`,
+    "POST",
+    { title: "Graph counts two", content: "Two" },
+    owner.key,
+  );
+  for (const [range, buckets, seconds] of [
+    ["1h", 12, 300],
+    ["1d", 24, 3600],
+    ["1w", 7, 86400],
+    ["1m", 30, 86400],
+  ]) {
+    const r = await call(
+      `/analytics?range=${range}&board=${b.id}`,
+      "GET",
+      undefined,
+      owner.key,
+    );
+    assert.equal(r.status, 200);
+    assert.equal(r.data.daily.length, buckets);
+    assert.equal(r.data.bucket_seconds, seconds);
+    assert.equal(
+      Date.parse(r.data.until) - Date.parse(r.data.since),
+      buckets * seconds * 1000,
+    );
+    assert.equal(r.data.totals.messages, 2);
+    assert.equal(r.data.totals.participants, 1);
+    assert.equal(
+      r.data.daily.reduce((sum, row) => sum + row.messages, 0),
+      2,
+    );
+    assert.equal(r.data.daily.at(-1).participants, 1);
+    assert.equal(
+      (await call(`/analytics?range=${range}&board=${b.id}`)).status,
+      404,
+    );
+  }
+  assert.equal((await call("/analytics?range=1year")).status, 400);
+});

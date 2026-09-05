@@ -1985,135 +1985,168 @@ createRoot(document.getElementById("root")!).render(
 type AnalyticsData = {
   totals: {
     boards: number;
+
     threads: number;
+
     messages: number;
+
     participants: number;
   };
+
   daily: { date: string; messages: number; participants: number }[];
+
   boards: {
     id: string;
+
     slug: string;
+
     name: string;
+
     visibility: string;
+
     messages: number;
+
     participants: number;
   }[];
 };
+
 function Analytics({ navigate }: { navigate: (path: string) => void }) {
-  const [days, setDays] = useState(30),
+  const [range, setRange] = useState("1d"),
     [data, setData] = useState<AnalyticsData | null>(null),
     [error, setError] = useState(""),
     [refresh, setRefresh] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
+
     setData(null);
+
     setError("");
-    api<AnalyticsData>(`/analytics?days=${days}`)
+
+    api<AnalyticsData>(`/analytics?range=${range}`)
       .then((r) => {
         if (!cancelled) setData(r);
       })
+
       .catch((e) => {
         if (!cancelled) setError(e.message);
       });
+
     return () => {
       cancelled = true;
     };
-  }, [days, refresh]);
-  const max = Math.max(1, ...(data?.daily.map((d) => d.messages) || []));
+  }, [range, refresh]);
+
+  const interval =
+    range === "1h" ? "5-minute" : range === "1d" ? "Hourly" : "Daily";
+
   return (
     <section className="analytics-page">
       <div className="analytics-heading">
         <div>
           <p className="eyebrow">THE NETWORK IN NUMBERS</p>
+
           <h1>Board activity</h1>
+
           <p>Public boards and private boards you can access.</p>
         </div>
+
         <div>
           <label>
             Period{" "}
             <select
-              value={days}
-              onChange={(e) => setDays(Number(e.target.value))}
+              value={range}
+
+              onChange={(e) => setRange(e.target.value)}
             >
-              <option value={7}>Last 7 days</option>
-              <option value={30}>Last 30 days</option>
-              <option value={90}>Last 90 days</option>
+              <option value="1h">1 hour</option>
+
+              <option value="1d">1 day</option>
+
+              <option value="1w">1 week</option>
+
+              <option value="1m">1 month (30 days)</option>
             </select>
           </label>{" "}
           <button
             className="btn secondary"
+
             onClick={() => setRefresh((r) => r + 1)}
           >
             Refresh
           </button>
         </div>
       </div>
+
       {error && (
         <p className="form-error" role="alert">
           {error}
         </p>
       )}
+
       {!data && !error && <p role="status">Loading activity…</p>}
+
       {data && (
         <>
           <div className="analytics-cards">
             {(
               [
                 ["Visible boards", data.totals.boards],
+
                 ["New threads", data.totals.threads],
+
                 ["Messages", data.totals.messages],
+
                 ["Active participants", data.totals.participants],
               ] as const
             ).map(([label, value]) => (
               <div key={label}>
                 <span>{label}</span>
+
                 <strong>{value.toLocaleString()}</strong>
               </div>
             ))}
           </div>
+
+          <div className="analytics-graphs">
+            <ActivityGraph
+              title="Messages"
+              metric="messages"
+              rows={data.daily}
+              interval={interval}
+            />
+
+            <ActivityGraph
+              title="Active users"
+              metric="participants"
+              rows={data.daily}
+              interval={interval}
+            />
+          </div>
+
           <div className="analytics-panel">
-            <h2>Messages over time</h2>
-            <p>
-              Daily activity · UTC · includes thread opening messages and
-              replies
-            </p>
-            <div
-              className="analytics-chart"
-              role="img"
-              aria-label={`Daily messages for the last ${days} days. Exact values are in the daily data table below.`}
-            >
-              {data.daily.map((d) => (
-                <div key={d.date} title={`${d.date}: ${d.messages} messages`}>
-                  <span style={{ height: `${(d.messages / max) * 100}%` }} />
-                </div>
-              ))}
-            </div>
-            <div className="analytics-axis">
-              <span>{data.daily[0].date}</span>
-              <span>{data.daily.at(-1)?.date}</span>
-            </div>
-            {data.totals.messages === 0 && (
-              <p>
-                No messages in this period. Start a conversation to see activity
-                here.
-              </p>
-            )}
             <details>
-              <summary>View daily data</summary>
+              <summary>View graph data</summary>
+
               <div className="analytics-table">
                 <table>
                   <thead>
                     <tr>
-                      <th>Date (UTC)</th>
+                      <th>Interval start (UTC)</th>
+
                       <th>Messages</th>
+
                       <th>Participants</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {data.daily.map((d) => (
                       <tr key={d.date}>
                         <td>{d.date}</td>
+
                         <td>{d.messages}</td>
+
                         <td>{d.participants}</td>
                       </tr>
                     ))}
@@ -2122,19 +2155,26 @@ function Analytics({ navigate }: { navigate: (path: string) => void }) {
               </div>
             </details>
           </div>
+
           <div className="analytics-panel">
             <h2>Activity by board</h2>
+
             <p>Top 20 visible boards by message count in this period.</p>
+
             <div className="analytics-table">
               <table>
                 <thead>
                   <tr>
                     <th>Board</th>
+
                     <th>Access</th>
+
                     <th>Messages</th>
+
                     <th>Participants</th>
                   </tr>
                 </thead>
+
                 <tbody>
                   {data.boards.map((b) => (
                     <tr key={b.id}>
@@ -2143,8 +2183,11 @@ function Analytics({ navigate }: { navigate: (path: string) => void }) {
                           {b.name}
                         </button>
                       </td>
+
                       <td>{b.visibility}</td>
+
                       <td>{b.messages}</td>
+
                       <td>{b.participants}</td>
                     </tr>
                   ))}
@@ -2152,14 +2195,81 @@ function Analytics({ navigate }: { navigate: (path: string) => void }) {
               </table>
             </div>
           </div>
+
           <p className="analytics-definition">
             Active participants are distinct accounts that posted during the
-            selected period, including today. Deleted messages and deleted
-            threads are excluded. These are posting statistics; page views and
-            passive visitors are not tracked.
+            selected rolling period. Each user is counted once per graph
+            interval; the total counts each user once across the entire period.
+            Deleted messages and deleted threads are excluded. These are posting
+            statistics; page views and passive visitors are not tracked.
           </p>
         </>
       )}
     </section>
+  );
+}
+
+function ActivityGraph({
+  title,
+  metric,
+  rows,
+  interval,
+}: {
+  title: string;
+  metric: "messages" | "participants";
+  rows: AnalyticsData["daily"];
+  interval: string;
+}) {
+  const max = Math.max(1, ...rows.map((row) => row[metric]));
+
+  const format = (date: string) =>
+    new Date(date).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "UTC",
+    });
+
+  return (
+    <div className="analytics-panel">
+      <h2>{title}</h2>
+      <p>
+        {interval} intervals · UTC
+        {metric === "participants"
+          ? " · accounts that posted"
+          : " · opening messages and replies"}
+      </p>
+
+      <div className="analytics-scale">
+        <span>{max.toLocaleString()}</span>
+        <span>0</span>
+      </div>
+
+      <div
+        className={`analytics-chart ${metric}`}
+        role="img"
+        aria-label={`${title} over time. Scale 0 to ${max}. Exact values available in graph data.`}
+      >
+        {rows.map((row) => (
+          <div
+            key={row.date}
+            tabIndex={0}
+            aria-label={`${format(row.date)} UTC: ${row[metric]} ${title.toLowerCase()}`}
+            title={`${format(row.date)} UTC: ${row[metric]} ${title.toLowerCase()}`}
+          >
+            <span style={{ height: `${(row[metric] / max) * 100}%` }} />
+          </div>
+        ))}
+      </div>
+      <div className="analytics-axis">
+        <span>{format(rows[0].date)}</span>
+        <span>{format(rows.at(-1)!.date)}</span>
+      </div>
+
+      {rows.every((row) => row[metric] === 0) && (
+        <p>No {title.toLowerCase()} in this period.</p>
+      )}
+    </div>
   );
 }

@@ -431,39 +431,55 @@ async function router(
   if (path === "/v1/analytics" && method === "GET") {
     const days = Number(url.searchParams.get("days") || 30);
     if (![7, 30, 90].includes(days)) fail(400, "Days must be 7, 30, or 90.");
+    const range = url.searchParams.get("range");
+    const ranges: Record<string, [number, number]> = {
+      "1h": [3600, 300],
+      "1d": [86400, 3600],
+      "1w": [604800, 86400],
+      "1m": [2592000, 86400],
+    };
+    if (range && !ranges[range]) fail(400, "Range must be 1h, 1d, 1w, or 1m.");
+    const until = new Date();
     const selected = url.searchParams.get("board");
     const selectedBoard = selected ? await board(db, selected, a) : null;
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
     start.setUTCDate(start.getUTCDate() - days + 1);
+    if (range) start.setTime(until.getTime() - ranges[range][0] * 1000);
+    const bucketSeconds = range ? ranges[range][1] : 86400;
+    const bucketCount = range ? ranges[range][0] / bucketSeconds : days;
     const since = start.toISOString();
+    const bucketSql = range
+      ? `CAST((julianday(created_at)-julianday(?))*86400 / ${bucketSeconds} AS INTEGER)`
+      : "substr(created_at,1,10)";
     const visible = `WITH visible AS (SELECT b.id,b.slug,b.name,b.visibility FROM boards b
       WHERE (b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))
       AND (?='' OR b.id=?)), posts AS (
       SELECT m.*,t.board_id FROM messages m JOIN threads t ON t.id=m.thread_id JOIN visible v ON v.id=t.board_id
-      WHERE m.deleted=0 AND t.deleted=0 AND m.created_at>=?) `;
+      WHERE m.deleted=0 AND t.deleted=0 AND m.created_at>=? AND m.created_at<=?) `;
     const params = [
       a?.is_admin || 0,
       a?.id || "",
       selectedBoard?.id || "",
       selectedBoard?.id || "",
       since,
+      until.toISOString(),
     ];
     const results = await db.batch([
       db
         .prepare(
           visible +
             `SELECT (SELECT COUNT(*) FROM visible) AS boards,
-        (SELECT COUNT(*) FROM threads t JOIN visible v ON v.id=t.board_id WHERE t.deleted=0 AND t.created_at>=?) AS threads,
+        (SELECT COUNT(*) FROM threads t JOIN visible v ON v.id=t.board_id WHERE t.deleted=0 AND t.created_at>=? AND t.created_at<=?) AS threads,
         COUNT(*) AS messages,COUNT(DISTINCT author_id) AS participants FROM posts`,
         )
-        .bind(...params, since),
+        .bind(...params, since, until.toISOString()),
       db
         .prepare(
           visible +
-            `SELECT substr(created_at,1,10) AS date,COUNT(*) AS messages,COUNT(DISTINCT author_id) AS participants FROM posts GROUP BY date ORDER BY date`,
+            `SELECT ${bucketSql} AS date,COUNT(*) AS messages,COUNT(DISTINCT author_id) AS participants FROM posts GROUP BY date ORDER BY date`,
         )
-        .bind(...params),
+        .bind(...params, ...(range ? [since] : [])),
       db
         .prepare(
           visible +
@@ -474,7 +490,7 @@ async function router(
     const daily = new Map(
       (
         results[1].results as {
-          date: string;
+          date: string | number;
           messages: number;
           participants: number;
         }[]
@@ -482,14 +498,24 @@ async function router(
     );
     return json({
       days,
+      range,
+      bucket_seconds: bucketSeconds,
+      until: until.toISOString(),
       since,
       timezone: "UTC",
       totals: results[0].results[0],
-      daily: Array.from({ length: days }, (_, i) => {
-        const date = new Date(start.getTime() + i * 86400000)
+      daily: Array.from({ length: bucketCount }, (_, i) => {
+        const date = new Date(start.getTime() + i * bucketSeconds * 1000)
           .toISOString()
           .slice(0, 10);
-        return daily.get(date) || { date, messages: 0, participants: 0 };
+        const timestamp = new Date(
+          start.getTime() + i * bucketSeconds * 1000,
+        ).toISOString();
+        const row = daily.get(range ? i : date);
+        return {
+          ...(row || { messages: 0, participants: 0 }),
+          date: range ? timestamp : date,
+        };
       }),
       boards: results[2].results,
     });

@@ -56,3 +56,5 @@ Board owners can revoke/restore members, create one-time 24-hour invitations, ch
 - No file uploads, paid plans, AI inference, webhooks, MCP server, or end-to-end encryption in this release.
 
 Analytics are available at `/analytics` and `GET /v1/analytics?days=30` (7, 30, or 90 days). Optional `board=<id-or-slug>` limits the API response to one accessible board. Counts include non-deleted messages in non-deleted threads, distinct posting accounts, and new threads during the UTC calendar period including today. Board counts are current. Public boards and authorized private boards only; responses are not cached. No pageview tracking is collected.
+
+Analytics graph ranges: `GET /v1/analytics?range=1h|1d|1w|1m`. These are rolling 1-hour, 24-hour, 7-day, or 30-day windows with 5-minute, hourly, daily, or daily intervals respectively. The `daily` response array contains interval start timestamps and counts; `bucket_seconds` describes interval width. Active users are distinct posting accounts per interval; period totals deduplicate across intervals. The legacy `days` parameter remains supported.

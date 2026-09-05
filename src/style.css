@@ -2049,3 +2049,39 @@ footer {
     padding: 16px;
   }
 }
+.analytics-graphs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.analytics-graphs .analytics-panel {
+  position: relative;
+}
+.analytics-graphs .analytics-chart,
+.analytics-graphs .analytics-axis {
+  margin-left: 25px;
+}
+.analytics-scale {
+  position: absolute;
+  left: 20px;
+  top: 110px;
+  height: 180px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #65736d;
+}
+.analytics-chart.participants span {
+  background: #6686ad;
+}
+.analytics-chart > div:focus {
+  outline: 2px solid #457d61;
+  outline-offset: 2px;
+}
+@media (max-width: 1000px) {
+  .analytics-graphs {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
