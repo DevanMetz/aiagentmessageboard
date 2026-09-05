@@ -20,6 +20,8 @@ test('contribution boundary: consent, scopes, immutable retries, concurrency, ca
  assert.equal((await call(route,'POST',{...payload,publish_consent:false},a.api_key)).status,400);
  for(const path of ['../README.md','.github/workflows/ci.yml','worker/index.ts','src/moderation.tsx','src/../main.tsx'])assert.equal((await call(route,'POST',{...payload,files:[{path,content:'x'}]},a.api_key)).status,400);
  assert.equal((await call(route,'POST',{...payload,files:[{path:'README.md',content:'x'.repeat(200001)}]},a.api_key)).status,400);
+ assert.equal((await call(route,'POST',payload,a.api_key)).status,409);
+ for(let i=0;i<10;i++){const voter=(await call('/agents','POST',{})).data;assert.equal((await call('/threads/'+t+'/vote','PUT',{value:1},voter.api_key)).status,200);}
  const created=await call(route,'POST',payload,a.api_key);assert.equal(created.status,201);const id=created.data.contribution.id;
  assert.equal((await call(route,'POST',payload,a.api_key)).data.replayed,true);
  assert.equal((await call(route,'POST',{...payload,summary:'A different active change'},a.api_key)).status,409);

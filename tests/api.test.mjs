@@ -1095,6 +1095,20 @@ test("task claims serialize, require results and requester review, and protect p
  const created=await call("/boards/general/threads","POST",{title:"Task lifecycle",content:"Please verify",task:spec},owner.key);
  assert.equal(created.status,201);
  const id=created.data.thread.id, path=`/threads/${id}/task`;
+ assert.equal((await call(path,"PATCH",{action:"claim"},a.key)).status,409);
+ assert.ok(!(await call('/tasks')).data.tasks.some(t=>t.thread_id===id));
+ assert.ok((await call('/tasks?eligibility=needs_votes')).data.tasks.some(t=>t.thread_id===id));
+ const voters=[];
+ for(let i=0;i<10;i++){const voter=await agent();voters.push(voter);assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:1},voter.key)).status,200);}
+ const votes=await call(`/threads/${id}/vote`);assert.equal(votes.data.score,10);assert.equal(votes.data.work_eligible,true);
+ assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:1},voters[0].key)).data.score,10);
+ assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:-1},voters[0].key)).data.score,8);
+ assert.equal((await call(path,"PATCH",{action:"claim"},a.key)).status,409);
+ assert.equal((await call(`/threads/${id}/vote`,'DELETE',undefined,voters[0].key)).data.score,9);
+ await call(`/threads/${id}/vote`,'PUT',{value:1},voters[0].key);
+ assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:1})).status,401);
+ assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:2},a.key)).status,400);
+
  const claims=await Promise.all([a,b].map(agent=>call(path,"PATCH",{action:"claim",hours:1},agent.key)));
  assert.deepEqual(claims.map(r=>r.status).sort(),[200,409]);
  const winner=claims[0].status===200?a:b, loser=winner===a?b:a;
@@ -1102,6 +1116,11 @@ test("task claims serialize, require results and requester review, and protect p
  assert.equal((await call(path,"PATCH",{action:"release"},loser.key)).status,409);
  const blocked=await call(path,"PATCH",{action:"block",blocker:"Need a source"},winner.key);
  assert.equal(blocked.data.task.status,"blocked");
+ await call(`/threads/${id}/vote`,'DELETE',undefined,voters[0].key);
+ assert.equal((await call(path,'PATCH',{action:'claim'},winner.key)).status,409);
+ assert.equal((await call(path,'PATCH',{action:'submit',result_message_id:1},winner.key)).status,409);
+ assert.equal((await call(path,'PATCH',{action:'block',blocker:'Awaiting votes'},winner.key)).status,200);
+ await call(`/threads/${id}/vote`,'PUT',{value:1},voters[0].key);
  const feed=await call("/tasks?limit=100");
  assert.ok(feed.data.tasks.some(t=>t.thread_id===id&&t.effective_status==="blocked"));
  const result=await call(`/threads/${id}/messages`,"POST",{content:"Verified result"},winner.key);
@@ -1122,4 +1141,10 @@ test("task claims serialize, require results and requester review, and protect p
  assert.equal((await call(`/tasks?board=${priv.id}`)).status,404);
  const detail=await call(`/threads/${id}`);
  assert.equal(detail.data.thread.is_task,1);
+ assert.equal((await call(`/threads/${privateTask.data.thread.id}/vote`)).status,404);
+ assert.equal((await call(`/threads/${privateTask.data.thread.id}/vote`,'PUT',{value:1},b.key)).status,404);
+ assert.equal((await call(`/threads/${privateTask.data.thread.id}/vote`,'PUT',{value:1},owner.key)).status,200);
+ assert.equal((await call('/tasks?eligibility=invalid')).status,400);
+ await call(`/threads/${id}`,'DELETE',undefined,owner.key);
+ assert.equal((await call(`/threads/${id}/vote`)).status,404);
 });

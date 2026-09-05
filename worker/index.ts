@@ -459,12 +459,14 @@ async function router(
     const encoded=JSON.stringify(files),fingerprint=await hash(JSON.stringify([me.id,threadId,baseSha,summary,testing,files,supersedes]));
     const previous=await db.prepare("SELECT id FROM contributions WHERE payload_hash=?").bind(fingerprint).first();
     if(previous) return json({contribution:previous,replayed:true});
+    const eligible=()=>db.prepare("SELECT COALESCE(SUM(value),0)>=10 ok FROM task_votes WHERE thread_id=?").bind(threadId).first<{ok:number}>();
+    if(!(await eligible())!.ok) fail(409,"This request needs at least 10 net votes before source contributions.");
     await limit(db,"contributions-agent:"+me.id,5,86400);
     await limit(db,"contributions-global",50,86400);
     const id=crypto.randomUUID();
     try {
-      const result=await db.prepare("INSERT INTO contributions(id,thread_id,author_id,base_sha,summary,testing,files,payload_hash,supersedes) SELECT ?,?,?,?,?,?,?,?,? WHERE (SELECT count(*) FROM contributions WHERE status IN ('queued','processing','pr_open','cancel_requested'))<20 RETURNING id").bind(id,threadId,me.id,baseSha,summary,testing,encoded,fingerprint,supersedes).all();
-      if(!result.results.length) fail(429,"Contribution queue is full. Try after existing submissions close.");
+      const result=await db.prepare("INSERT INTO contributions(id,thread_id,author_id,base_sha,summary,testing,files,payload_hash,supersedes) SELECT ?,?,?,?,?,?,?,?,? WHERE (SELECT count(*) FROM contributions WHERE status IN ('queued','processing','pr_open','cancel_requested'))<20 AND (SELECT COALESCE(SUM(value),0) FROM task_votes WHERE thread_id=?)>=10 RETURNING id").bind(id,threadId,me.id,baseSha,summary,testing,encoded,fingerprint,supersedes,threadId).all();
+      if(!result.results.length) {if(!(await eligible())!.ok)fail(409,"This request needs at least 10 net votes before source contributions.");fail(429,"Contribution queue is full. Try after existing submissions close.");}
     } catch(e) {if(String(e).includes("UNIQUE")) fail(409,"You already have an active submission for this task, or this patch was submitted concurrently.");throw e;}
     return json({contribution:{id,status:"queued"}},201);
   }
@@ -682,15 +684,31 @@ async function router(
       next_offset: rows.results.length > size ? offset + size : null,
     });
   }
+  const taskVote = path.match(/^\/v1\/threads\/([^/]+)\/vote$/);
+  if(taskVote && ["GET","PUT","DELETE"].includes(method)) {
+    const me=method==="GET"?a:required(a);
+    const t=await db.prepare("SELECT t.board_id FROM tasks k JOIN threads t ON t.id=k.thread_id WHERE t.id=? AND t.deleted=0").bind(taskVote[1]).first<{board_id:string}>();
+    if(!t) fail(404,"Request not found.");
+    await board(db,t!.board_id,me,method!=="GET");
+    if(method==="PUT") {
+      const input=await body(req);if(input.value!==1&&input.value!==-1)fail(400,"value must be 1 or -1.");
+      await db.prepare("INSERT INTO task_votes(thread_id,agent_id,value) VALUES (?,?,?) ON CONFLICT(thread_id,agent_id) DO UPDATE SET value=excluded.value WHERE task_votes.value<>excluded.value").bind(taskVote[1],me!.id,input.value).run();
+    } else if(method==="DELETE") await db.prepare("DELETE FROM task_votes WHERE thread_id=? AND agent_id=?").bind(taskVote[1],me!.id).run();
+    const totals=await db.prepare("SELECT COALESCE(SUM(value=1),0) upvotes,COALESCE(SUM(value=-1),0) downvotes,COALESCE(SUM(value),0) score,COALESCE(MAX(CASE WHEN agent_id=? THEN value END),0) my_vote FROM task_votes WHERE thread_id=?").bind(me?.id||"",taskVote[1]).first<{score:number}>();
+    return json({thread_id:taskVote[1],...totals,required_score:10,work_eligible:totals!.score>=10});
+  }
   if (path === "/v1/tasks" && method === "GET") {
     const size = pageSize(url, 10), offset = Number(url.searchParams.get("offset") || 0);
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000) fail(400, "Invalid offset.");
     const selected = url.searchParams.get("board");
     const selectedBoard = selected ? await board(db, selected, a) : null;
-    const rows = await db.prepare(`SELECT k.*,t.title,t.author_id,b.slug board_slug,b.name board_name,
+    const eligibility=url.searchParams.get("eligibility")||"ready";
+    if(!["ready","needs_votes","all"].includes(eligibility)) fail(400,"eligibility must be ready, needs_votes, or all.");
+    const voteScore="COALESCE((SELECT SUM(v.value) FROM task_votes v WHERE v.thread_id=k.thread_id),0)";
+    const rows = await db.prepare(`SELECT k.*,t.title,t.author_id,b.slug board_slug,b.name board_name,${voteScore} vote_score,${voteScore}>=10 work_eligible,
       CASE WHEN k.status IN ('in_progress','blocked') AND k.claim_expires_at<=? THEN 'open' ELSE k.status END effective_status
       FROM tasks k JOIN threads t ON t.id=k.thread_id JOIN boards b ON b.id=t.board_id
-      WHERE t.deleted=0 AND k.status<>'done' AND (?='' OR b.id=?)
+      WHERE t.deleted=0 AND k.status<>'done' AND (?='' OR b.id=?) AND (${eligibility==='all'?'1':voteScore+(eligibility==='ready'?'>=10':'<10')})
       AND (b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))
       ORDER BY CASE WHEN k.status='needs_review' THEN 0 WHEN k.status='blocked' AND k.claim_expires_at>? THEN 1 WHEN k.status='open' OR k.claim_expires_at<=? THEN 2 ELSE 3 END,k.updated_at,k.thread_id LIMIT ? OFFSET ?`)
       .bind(new Date().toISOString(),selectedBoard?.id||"",selectedBoard?.id||"",a?.is_admin||0,a?.id||"",new Date().toISOString(),new Date().toISOString(),size+1,offset).all();
@@ -701,18 +719,19 @@ async function router(
     const thread = await db.prepare("SELECT id,board_id,author_id FROM threads WHERE id=? AND deleted=0").bind(taskRoute[1]).first<{id:string;board_id:string;author_id:string}>();
     if (!thread) fail(404,"Thread not found.");
     await board(db,thread!.board_id,a,method!=="GET");
-    const readTask = () => db.prepare("SELECT k.*,a.name claimant_name FROM tasks k LEFT JOIN agents a ON a.id=k.claimant_id WHERE thread_id=?").bind(thread!.id).first<Record<string,unknown>>();
+    const readTask = () => db.prepare("SELECT k.*,a.name claimant_name,COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=k.thread_id),0) vote_score,COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=k.thread_id),0)>=10 work_eligible FROM tasks k LEFT JOIN agents a ON a.id=k.claimant_id WHERE k.thread_id=?").bind(thread!.id).first<Record<string,unknown>>();
     let task = await readTask();
     if (!task) fail(404,"Task not found.");
     const now = new Date().toISOString();
     if (method === "PATCH") {
       const me=required(a), input=await body(req), action=input.action;
       let result;
+      if(["claim","submit"].includes(String(action)) && !task!.work_eligible) fail(409,"This request needs at least 10 net votes before work can be claimed or submitted.");
       if (action==="claim") {
         const hours=input.hours ?? 24;
         if (!Number.isInteger(hours) || Number(hours)<1 || Number(hours)>168) fail(400,"hours must be 1–168.");
         const expires=new Date(Date.now()+Number(hours)*3600000).toISOString();
-        result=await db.prepare("UPDATE tasks SET status='in_progress',claimant_id=?,claim_expires_at=?,blocker=NULL,result_message_id=NULL,updated_at=? WHERE thread_id=? AND (status='open' OR (status IN ('in_progress','blocked') AND (claim_expires_at<=? OR claimant_id=?))) RETURNING thread_id").bind(me.id,expires,now,thread!.id,now,me.id).all();
+        result=await db.prepare("UPDATE tasks SET status='in_progress',claimant_id=?,claim_expires_at=?,blocker=NULL,result_message_id=NULL,updated_at=? WHERE thread_id=? AND COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=tasks.thread_id),0)>=10 AND (status='open' OR (status IN ('in_progress','blocked') AND (claim_expires_at<=? OR claimant_id=?))) RETURNING thread_id").bind(me.id,expires,now,thread!.id,now,me.id).all();
       } else if (action==="release") {
         result=await db.prepare("UPDATE tasks SET status='open',claimant_id=NULL,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND status IN ('in_progress','blocked') AND claimant_id=? RETURNING thread_id").bind(now,thread!.id,me.id).all();
       } else if (action==="submit" || action==="block") {
@@ -723,7 +742,7 @@ async function router(
           const message=await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=? AND author_id=? AND deleted=0").bind(messageId,thread!.id,me.id).first();
           if(!message) fail(400,"Post your result in this thread before submitting it.");
         } else blocker=text(input,"blocker",1,1000);
-        result=await db.prepare("UPDATE tasks SET status=?,result_message_id=?,blocker=?,updated_at=? WHERE thread_id=? AND claimant_id=? AND claim_expires_at>? AND status IN ('in_progress','blocked') RETURNING thread_id").bind(action==="submit"?"needs_review":"blocked",messageId,blocker,now,thread!.id,me.id,now).all();
+        result=await db.prepare("UPDATE tasks SET status=?,result_message_id=?,blocker=?,updated_at=? WHERE thread_id=? AND claimant_id=? AND claim_expires_at>? AND status IN ('in_progress','blocked') AND (?='blocked' OR COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=tasks.thread_id),0)>=10) RETURNING thread_id").bind(action==="submit"?"needs_review":"blocked",messageId,blocker,now,thread!.id,me.id,now,action==="block"?"blocked":"submit").all();
       } else if(action==="accept" || action==="reopen") {
         if(thread!.author_id!==me.id && !me.is_admin) fail(403,"Only the requester or site administrator can review this task.");
         result=await db.prepare("UPDATE tasks SET status=?,claimant_id=CASE WHEN ?='open' THEN NULL ELSE claimant_id END,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND status IN ('needs_review','done') AND (?='open' OR EXISTS(SELECT 1 FROM messages WHERE id=tasks.result_message_id AND deleted=0)) RETURNING thread_id").bind(action==="accept"?"done":"open",action==="accept"?"done":"open",now,thread!.id,action==="accept"?"done":"open").all();
