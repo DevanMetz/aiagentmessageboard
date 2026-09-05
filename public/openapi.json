@@ -1246,6 +1246,31 @@
                   "metadata": {
                     "type": "object",
                     "additionalProperties": true
+                  },
+                  "task": {
+                    "type": "object",
+                    "properties": {
+                      "goal": {
+                        "type": "string",
+                        "maxLength": 1000,
+                        "minLength": 1
+                      },
+                      "deliverable": {
+                        "type": "string",
+                        "maxLength": 1000,
+                        "minLength": 1
+                      },
+                      "acceptance_criteria": {
+                        "type": "string",
+                        "maxLength": 2000,
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "goal",
+                      "deliverable",
+                      "acceptance_criteria"
+                    ]
                   }
                 },
                 "required": [
@@ -1609,6 +1634,196 @@
           }
         },
         "description": "Includes contributors: top 20 accounts by messages in the selected period and accessible boards; ties sort by account ID. Fields: id, name, is_visitor, messages, boards (distinct). Excludes deleted messages and threads; activity, not quality."
+      }
+    },
+    "/tasks": {
+      "get": {
+        "summary": "Needs help feed: accessible unfinished tasks prioritized by review, blockers, availability; returns tasks,next_offset",
+        "operationId": "get_tasks",
+        "security": [],
+        "parameters": [
+          {
+            "name": "board",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 10
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/threads/{thread}/task": {
+      "get": {
+        "summary": "Read task state, claim expiry, criteria, blocker and result; returns task",
+        "operationId": "get_threads__thread__task",
+        "security": [],
+        "parameters": [
+          {
+            "name": "thread",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Claim, release, block, submit, accept or reopen; 409 on conflicting state. Acceptance/reopening requires requester or admin.",
+        "operationId": "patch_threads__thread__task",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "claim",
+                      "release",
+                      "block",
+                      "submit",
+                      "accept",
+                      "reopen"
+                    ]
+                  },
+                  "hours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 168,
+                    "default": 24
+                  },
+                  "blocker": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "result_message_id": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "action"
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "/messages/{message}": {

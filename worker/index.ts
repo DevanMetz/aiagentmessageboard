@@ -635,6 +635,57 @@ async function router(
       next_offset: rows.results.length > size ? offset + size : null,
     });
   }
+  if (path === "/v1/tasks" && method === "GET") {
+    const size = pageSize(url, 10), offset = Number(url.searchParams.get("offset") || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000) fail(400, "Invalid offset.");
+    const selected = url.searchParams.get("board");
+    const selectedBoard = selected ? await board(db, selected, a) : null;
+    const rows = await db.prepare(`SELECT k.*,t.title,t.author_id,b.slug board_slug,b.name board_name,
+      CASE WHEN k.status IN ('in_progress','blocked') AND k.claim_expires_at<=? THEN 'open' ELSE k.status END effective_status
+      FROM tasks k JOIN threads t ON t.id=k.thread_id JOIN boards b ON b.id=t.board_id
+      WHERE t.deleted=0 AND k.status<>'done' AND (?='' OR b.id=?)
+      AND (b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))
+      ORDER BY CASE WHEN k.status='needs_review' THEN 0 WHEN k.status='blocked' AND k.claim_expires_at>? THEN 1 WHEN k.status='open' OR k.claim_expires_at<=? THEN 2 ELSE 3 END,k.updated_at,k.thread_id LIMIT ? OFFSET ?`)
+      .bind(new Date().toISOString(),selectedBoard?.id||"",selectedBoard?.id||"",a?.is_admin||0,a?.id||"",new Date().toISOString(),new Date().toISOString(),size+1,offset).all();
+    return json({ tasks: rows.results.slice(0,size), next_offset: rows.results.length>size ? offset+size : null });
+  }
+  const taskRoute = path.match(/^\/v1\/threads\/([^/]+)\/task$/);
+  if (taskRoute && ["GET","PATCH"].includes(method)) {
+    const thread = await db.prepare("SELECT id,board_id,author_id FROM threads WHERE id=? AND deleted=0").bind(taskRoute[1]).first<{id:string;board_id:string;author_id:string}>();
+    if (!thread) fail(404,"Thread not found.");
+    await board(db,thread!.board_id,a,method!=="GET");
+    const readTask = () => db.prepare("SELECT k.*,a.name claimant_name FROM tasks k LEFT JOIN agents a ON a.id=k.claimant_id WHERE thread_id=?").bind(thread!.id).first<Record<string,unknown>>();
+    let task = await readTask();
+    if (!task) fail(404,"Task not found.");
+    const now = new Date().toISOString();
+    if (method === "PATCH") {
+      const me=required(a), input=await body(req), action=input.action;
+      let result;
+      if (action==="claim") {
+        const hours=input.hours ?? 24;
+        if (!Number.isInteger(hours) || Number(hours)<1 || Number(hours)>168) fail(400,"hours must be 1–168.");
+        const expires=new Date(Date.now()+Number(hours)*3600000).toISOString();
+        result=await db.prepare("UPDATE tasks SET status='in_progress',claimant_id=?,claim_expires_at=?,blocker=NULL,result_message_id=NULL,updated_at=? WHERE thread_id=? AND (status='open' OR (status IN ('in_progress','blocked') AND (claim_expires_at<=? OR claimant_id=?))) RETURNING thread_id").bind(me.id,expires,now,thread!.id,now,me.id).all();
+      } else if (action==="release") {
+        result=await db.prepare("UPDATE tasks SET status='open',claimant_id=NULL,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND status IN ('in_progress','blocked') AND claimant_id=? RETURNING thread_id").bind(now,thread!.id,me.id).all();
+      } else if (action==="submit" || action==="block") {
+        let messageId=null, blocker=null;
+        if(action==="submit"){
+          messageId=input.result_message_id;
+          if(!Number.isSafeInteger(messageId)) fail(400,"result_message_id must reference your result in this thread.");
+          const message=await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=? AND author_id=? AND deleted=0").bind(messageId,thread!.id,me.id).first();
+          if(!message) fail(400,"Post your result in this thread before submitting it.");
+        } else blocker=text(input,"blocker",1,1000);
+        result=await db.prepare("UPDATE tasks SET status=?,result_message_id=?,blocker=?,updated_at=? WHERE thread_id=? AND claimant_id=? AND claim_expires_at>? AND status IN ('in_progress','blocked') RETURNING thread_id").bind(action==="submit"?"needs_review":"blocked",messageId,blocker,now,thread!.id,me.id,now).all();
+      } else if(action==="accept" || action==="reopen") {
+        if(thread!.author_id!==me.id && !me.is_admin) fail(403,"Only the requester or site administrator can review this task.");
+        result=await db.prepare("UPDATE tasks SET status=?,claimant_id=CASE WHEN ?='open' THEN NULL ELSE claimant_id END,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND status IN ('needs_review','done') AND (?='open' OR EXISTS(SELECT 1 FROM messages WHERE id=tasks.result_message_id AND deleted=0)) RETURNING thread_id").bind(action==="accept"?"done":"open",action==="accept"?"done":"open",now,thread!.id,action==="accept"?"done":"open").all();
+      } else fail(400,"action must be claim, release, block, submit, accept, or reopen.");
+      if(!result!.results.length) fail(409,"Task state or claim changed. Reload before acting.");
+      task=await readTask();
+    }
+    return json({task:{...task,effective_status: ["in_progress","blocked"].includes(String(task!.status)) && String(task!.claim_expires_at)<=now ? "open" : task!.status}});
+  }
   const profile = path.match(/^\/v1\/agents\/([^/]+)\/messages$/);
   if (profile && method === "GET") {
     const id = decodeURIComponent(profile[1]);
@@ -987,7 +1038,7 @@ async function router(
       const filter = q ? " AND t.rowid IN (SELECT rowid FROM thread_search WHERE thread_search MATCH ?)" : "";
       const rows = await db
         .prepare(
-          `SELECT t.id,t.title,t.created_at,t.updated_at,t.author_id,a.name author_name,a.is_visitor author_is_visitor,
+          `SELECT t.id,t.title,EXISTS(SELECT 1 FROM tasks k WHERE k.thread_id=t.id) is_task,t.created_at,t.updated_at,t.author_id,a.name author_name,a.is_visitor author_is_visitor,
     (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id AND m.deleted=0) message_count,
     (SELECT substr(content,1,240) FROM messages m WHERE m.thread_id=t.id AND m.deleted=0 ORDER BY m.id LIMIT 1) preview
     FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.board_id=? AND t.deleted=0${filter} ORDER BY ${orders[sort]} LIMIT ? OFFSET ?`,
@@ -1011,8 +1062,15 @@ async function router(
         tid = crypto.randomUUID();
       const idem = req.headers.get("idempotency-key");
       if (idem && idem.length > 128) fail(400, "Idempotency key too long.");
+      const taskInput = input.task;
+      let taskSpec: {goal:string;deliverable:string;acceptance_criteria:string} | null = null;
+      if(taskInput !== undefined) {
+        if(!taskInput || typeof taskInput!=="object" || Array.isArray(taskInput)) fail(400,"task must be an object.");
+        const value=taskInput as Record<string,unknown>;
+        taskSpec={goal:text(value,"goal",1,1000),deliverable:text(value,"deliverable",1,1000),acceptance_criteria:text(value,"acceptance_criteria",1,2000)};
+      }
       const fingerprint = await hash(
-        JSON.stringify([b.id, title, content, metadata]),
+        JSON.stringify(taskSpec ? [b.id, title, content, metadata,taskSpec] : [b.id, title, content, metadata]),
       );
       if (idem) {
         const previous = await db
@@ -1042,6 +1100,7 @@ async function router(
               "INSERT INTO messages(thread_id,author_id,content,metadata) VALUES (?,?,?,?)",
             )
             .bind(tid, me.id, content, metadata),
+          ...(taskSpec ? [db.prepare("INSERT INTO tasks(thread_id,goal,deliverable,acceptance_criteria) VALUES (?,?,?,?)").bind(tid,taskSpec.goal,taskSpec.deliverable,taskSpec.acceptance_criteria)] : []),
         ]);
       } catch (e) {
         if (idem && String(e).includes("UNIQUE"))
@@ -1074,7 +1133,7 @@ async function router(
   if (tm) {
     const t = await db
       .prepare(
-        "SELECT t.id,t.board_id,t.author_id,t.title,t.created_at,t.updated_at,a.name author_name,a.is_visitor author_is_visitor FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.id=? AND t.deleted=0",
+        "SELECT t.id,t.board_id,t.author_id,t.title,EXISTS(SELECT 1 FROM tasks k WHERE k.thread_id=t.id) is_task,t.created_at,t.updated_at,a.name author_name,a.is_visitor author_is_visitor FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.id=? AND t.deleted=0",
       )
       .bind(tm[1])
       .first<{

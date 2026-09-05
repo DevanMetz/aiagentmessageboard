@@ -1088,3 +1088,38 @@ test("contributor history paginates newest first and filters private and deleted
  assert.equal((await call(path+"?before=no")).status,400);
  assert.equal((await call("/agents/missing/messages")).status,404);
 });
+
+test("task claims serialize, require results and requester review, and protect private work", async () => {
+ const owner=await agent(), a=await agent(), b=await agent();
+ const spec={goal:"Answer an actual question",deliverable:"A verified answer",acceptance_criteria:"Requester checks evidence"};
+ const created=await call("/boards/general/threads","POST",{title:"Task lifecycle",content:"Please verify",task:spec},owner.key);
+ assert.equal(created.status,201);
+ const id=created.data.thread.id, path=`/threads/${id}/task`;
+ const claims=await Promise.all([a,b].map(agent=>call(path,"PATCH",{action:"claim",hours:1},agent.key)));
+ assert.deepEqual(claims.map(r=>r.status).sort(),[200,409]);
+ const winner=claims[0].status===200?a:b, loser=winner===a?b:a;
+ assert.equal((await call(path,"PATCH",{action:"submit",result_message_id:1},winner.key)).status,400);
+ assert.equal((await call(path,"PATCH",{action:"release"},loser.key)).status,409);
+ const blocked=await call(path,"PATCH",{action:"block",blocker:"Need a source"},winner.key);
+ assert.equal(blocked.data.task.status,"blocked");
+ const feed=await call("/tasks?limit=100");
+ assert.ok(feed.data.tasks.some(t=>t.thread_id===id&&t.effective_status==="blocked"));
+ const result=await call(`/threads/${id}/messages`,"POST",{content:"Verified result"},winner.key);
+ assert.equal((await call(path,"PATCH",{action:"submit",result_message_id:result.data.message.id},winner.key)).data.task.status,"needs_review");
+ assert.equal((await call(path,"PATCH",{action:"accept"},winner.key)).status,403);
+ assert.equal((await call(path,"PATCH",{action:"claim"},loser.key)).status,409);
+ assert.equal((await call(path,"PATCH",{action:"accept"},owner.key)).data.task.status,"done");
+ assert.ok(!(await call("/tasks?limit=100")).data.tasks.some(t=>t.thread_id===id));
+ assert.equal((await call(path,"PATCH",{action:"reopen"},owner.key)).data.task.status,"open");
+ assert.equal((await call(path,"PATCH",{action:"claim"},loser.key)).status,200);
+ execFileSync(process.execPath,[wrangler,"d1","execute","aiagentmessageboard","--local","--persist-to",persist,"--command",`UPDATE tasks SET claim_expires_at='2000-01-01T00:00:00.000Z' WHERE thread_id='${id}'`],{stdio:"pipe"});
+ assert.equal((await call(path)).data.task.effective_status,"open");
+ assert.equal((await call(path,"PATCH",{action:"claim"},winner.key)).status,200);
+ const priv=await makeBoard(owner);
+ const privateTask=await call(`/boards/${priv.id}/threads`,"POST",{title:"Private task",content:"Secret work",task:spec},owner.key);
+ assert.equal((await call(`/threads/${privateTask.data.thread.id}/task`)).status,404);
+ assert.ok(!(await call("/tasks?limit=100")).data.tasks.some(t=>t.thread_id===privateTask.data.thread.id));
+ assert.equal((await call(`/tasks?board=${priv.id}`)).status,404);
+ const detail=await call(`/threads/${id}`);
+ assert.equal(detail.data.thread.is_task,1);
+});
