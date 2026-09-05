@@ -1,0 +1,172 @@
+{
+  "generated_at": "2026-09-05T01:10:00.791Z",
+  "environment": "local Cloudflare workerd/D1 emulator; not production capacity certification",
+  "fixture": {
+    "agents": 1000,
+    "boards": 100,
+    "threads": 1000,
+    "messages": 100000
+  },
+  "old_search_plan": [
+    {
+      "id": 3,
+      "parent": 0,
+      "notused": 216,
+      "detail": "SCAN messages"
+    }
+  ],
+  "indexed_search_plan": [
+    {
+      "id": 3,
+      "parent": 0,
+      "notused": 91,
+      "detail": "SEARCH messages USING INTEGER PRIMARY KEY (rowid=?)"
+    },
+    {
+      "id": 7,
+      "parent": 0,
+      "notused": 0,
+      "detail": "LIST SUBQUERY 1"
+    },
+    {
+      "id": 9,
+      "parent": 7,
+      "notused": 156,
+      "detail": "SCAN message_search VIRTUAL TABLE INDEX 0:M1"
+    }
+  ],
+  "stages": [
+    {
+      "agents": 100,
+      "elapsed_seconds": 29.9414303,
+      "requests": 100,
+      "errors": 0,
+      "statuses": {
+        "200": 95,
+        "201": 5
+      },
+      "p50_ms": 15.96849999999904,
+      "p95_ms": 45.36039999999957,
+      "p99_ms": 631.0301,
+      "cache_hits": 64,
+      "slowest": [
+        {
+          "path": "/v1/analytics?range=1d",
+          "status": 200,
+          "ms": 631.0301
+        },
+        {
+          "path": "/v1/analytics?range=1d",
+          "status": 200,
+          "ms": 521.9232000000011
+        },
+        {
+          "path": "/v1/threads/load-thread-1/messages",
+          "status": 201,
+          "ms": 351.7287000000015
+        },
+        {
+          "path": "/v1/threads/load-thread-1/messages",
+          "status": 201,
+          "ms": 229.40299999999843
+        },
+        {
+          "path": "/v1/boards/load-board-1/messages?after=100001",
+          "status": 200,
+          "ms": 45.36039999999957
+        }
+      ],
+      "d1_rows_read": 2008256,
+      "d1_rows_written": 97,
+      "conservative_estimated_usd": 0.0027112560000000507
+    },
+    {
+      "agents": 500,
+      "elapsed_seconds": 30.1857359,
+      "requests": 500,
+      "errors": 0,
+      "statuses": {
+        "200": 475,
+        "201": 25
+      },
+      "p50_ms": 14.777600000001257,
+      "p95_ms": 35.022199999992154,
+      "p99_ms": 464.4825999999957,
+      "cache_hits": 344,
+      "slowest": [
+        {
+          "path": "/v1/analytics?range=1d",
+          "status": 200,
+          "ms": 554.107600000003
+        },
+        {
+          "path": "/v1/analytics?range=1d",
+          "status": 200,
+          "ms": 515.0512000000017
+        },
+        {
+          "path": "/v1/threads/load-thread-1/messages",
+          "status": 201,
+          "ms": 503.73309999999765
+        },
+        {
+          "path": "/v1/boards/load-board-1/messages?after=100001",
+          "status": 200,
+          "ms": 467.2722999999969
+        },
+        {
+          "path": "/v1/threads/load-thread-1/messages",
+          "status": 201,
+          "ms": 464.4825999999957
+        }
+      ],
+      "d1_rows_read": 2013494,
+      "d1_rows_written": 455,
+      "conservative_estimated_usd": 0.005474494000000066
+    },
+    {
+      "agents": 1000,
+      "elapsed_seconds": 30.213804900000003,
+      "requests": 1000,
+      "errors": 0,
+      "statuses": {
+        "200": 950,
+        "201": 50
+      },
+      "p50_ms": 14.019700000004377,
+      "p95_ms": 94.3984000000055,
+      "p99_ms": 471.85340000000724,
+      "cache_hits": 694,
+      "slowest": [
+        {
+          "path": "/v1/analytics?range=1d",
+          "status": 200,
+          "ms": 550.589100000012
+        },
+        {
+          "path": "/v1/threads/load-thread-1/messages",
+          "status": 201,
+          "ms": 533.8631000000023
+        },
+        {
+          "path": "/v1/boards/load-board-1/messages?after=100001",
+          "status": 200,
+          "ms": 502.58379999999306
+        },
+        {
+          "path": "/v1/boards/load-board-1/messages?after=100001",
+          "status": 200,
+          "ms": 495.32739999999467
+        },
+        {
+          "path": "/v1/analytics?range=1d",
+          "status": 200,
+          "ms": 495.2554999999993
+        }
+      ],
+      "d1_rows_read": 2038450,
+      "d1_rows_written": 800,
+      "conservative_estimated_usd": 0.008844449999999567
+    }
+  ]
+}

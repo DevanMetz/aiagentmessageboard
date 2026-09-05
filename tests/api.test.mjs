@@ -411,6 +411,139 @@ test("cross-origin browser writes, invalid JSON, huge payloads, and SQL injectio
     0,
   );
 });
+test("message allowance is shared by new threads and replies without blocking reads", async () => {
+  const a = await agent();
+  const first = await call(
+    "/boards/general/threads",
+    "POST",
+    {
+      title: "Message allowance",
+      content: "First message",
+    },
+    a.key,
+  );
+  assert.equal(first.status, 201);
+  const path = `/threads/${first.data.thread.id}/messages`;
+  for (let i = 0; i < 9; i++) {
+    assert.equal(
+      (await call(path, "POST", { content: `Reply ${i}` }, a.key)).status,
+      201,
+    );
+  }
+  const blocked = await call(
+    path,
+    "POST",
+    { content: "Over allowance" },
+    a.key,
+  );
+  assert.equal(blocked.status, 429);
+  assert.ok(blocked.headers.get("retry-after"));
+  assert.equal(
+    (await call(`/threads/${first.data.thread.id}`, "GET", undefined, a.key))
+      .status,
+    200,
+  );
+});
+
+test("search paginates and protects private and deleted content", async () => {
+  const owner = await agent(),
+    outsider = await agent();
+  const b = await makeBoard(owner);
+  const term = "needle" + randomUUID();
+  await call(`/boards/${b.id}`, "PATCH", { name: term }, owner.key);
+  const first = await call(
+    `/boards/${b.id}/threads`,
+    "POST",
+    { title: term, content: term, metadata: { found: true } },
+    owner.key,
+  );
+  const tid = first.data.thread.id;
+  const reply = await call(
+    `/threads/${tid}/messages`,
+    "POST",
+    { content: term },
+    owner.key,
+  );
+  for (const kind of ["boards", "threads", "messages"]) {
+    const path = `/search/${kind}?q=${term.toUpperCase()}`;
+    assert.equal((await call(path)).data[kind].length, 0);
+    assert.equal(
+      (await call(path, "GET", undefined, outsider.key)).data[kind].length,
+      0,
+    );
+    assert.ok(
+      (await call(path, "GET", undefined, owner.key)).data[kind].length > 0,
+    );
+    assert.equal((await call(path + `&board=${b.id}`)).status, 404);
+    assert.equal((await call(`/search/${kind}?q=`)).status, 400);
+    assert.equal((await call(path + "&offset=-1")).status, 400);
+  }
+  const path = `/search/messages?q=${term}&board=${b.id}&limit=1`;
+  const page = await call(path, "GET", undefined, owner.key);
+  assert.equal(page.data.messages[0].id, reply.data.message.id);
+  assert.equal(page.data.next_offset, 1);
+  const next = await call(path + "&offset=1", "GET", undefined, owner.key);
+  assert.deepEqual(next.data.messages[0].metadata, { found: true });
+  assert.equal(next.data.next_offset, null);
+  await call(
+    `/messages/${reply.data.message.id}`,
+    "DELETE",
+    undefined,
+    owner.key,
+  );
+  assert.equal(
+    (await call(path, "GET", undefined, owner.key)).data.next_offset,
+    null,
+  );
+  await call(`/threads/${tid}`, "DELETE", undefined, owner.key);
+  assert.equal(
+    (await call(path, "GET", undefined, owner.key)).data.messages.length,
+    0,
+  );
+  assert.equal(
+    (await call(`/search/threads?q=${term}`, "GET", undefined, owner.key)).data
+      .threads.length,
+    0,
+  );
+  assert.equal((await call("/search/boards?q=%25")).data.boards.length, 0);
+});
+
+test("board addresses are generated from names and distinguish duplicate names", async () => {
+  const a = await agent();
+  const create = (name) =>
+    call("/boards", "POST", { name, description: "" }, a.key);
+  const first = await create("Café Research!");
+  const second = await create("Café Research!");
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  assert.match(first.data.board.slug, /^cafe-research-[a-f0-9]{12}$/);
+  assert.notEqual(first.data.board.slug, second.data.board.slug);
+  assert.equal((await call(`/boards/${first.data.board.slug}`)).status, 200);
+  assert.equal((await create("研究")).status, 201);
+});
+
+test("anonymous read cache is never reused for authenticated or cookie-bearing requests", async () => {
+  const a = await agent();
+  const path = `/boards/general?cache-test=${randomUUID()}`;
+  const first = await call(path);
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get("x-cache"), "MISS");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const second = await call(path);
+  assert.equal(second.headers.get("x-cache"), "HIT");
+  assert.equal(second.headers.get("cache-control"), "no-store");
+  const authenticated = await call(path, "GET", undefined, a.key);
+  assert.equal(authenticated.headers.get("x-cache"), null);
+  const cookie = await call(path, "GET", undefined, undefined, {
+    cookie: "amb_session=invalid",
+  });
+  assert.equal(cookie.headers.get("x-cache"), null);
+  assert.equal(
+    (await call("/admin/usage", "GET", undefined, a.key)).status,
+    403,
+  );
+});
+
 test("registration rate limits apply to a single IP", async () => {
   let last;
   for (let i = 0; i < 51; i++) {

@@ -1,9 +1,17 @@
 import { publicPage } from "./public-pages";
+import { meteredDatabase } from "./budget";
+export { BudgetGuard } from "./budget";
 
 interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   API_GATE: { limit(input: { key: string }): Promise<{ success: boolean }> };
+  WRITE_GATE: Env["API_GATE"];
+  AGENT_WRITE_GATE: Env["API_GATE"];
+  EXPENSIVE_GATE: Env["API_GATE"];
+  BUDGET: DurableObjectNamespace;
+  BOARD_BUDGET_USD: string;
+  BACKEND_PAUSED: string;
 }
 type Agent = {
   id: string;
@@ -271,8 +279,6 @@ async function router(
   const ip = await hash(
     req.headers.get("cf-connecting-ip") || "local-development",
   );
-  if (!(await env.API_GATE.limit({ key: ip })).success)
-    fail(429, "Too many API requests. Please try again later.");
   const page = await publicPage(req, env);
   if (page) return page;
   if (path === "/v1/health")
@@ -284,15 +290,17 @@ async function router(
     const origin = req.headers.get("origin");
     if (origin && origin !== url.origin)
       fail(403, "Cross-origin browser writes are not allowed.");
-    await limit(db, "write-ip:" + ip, 600, 60);
-    ctx.waitUntil(
-      db
-        .prepare(
-          "DELETE FROM rate_limits WHERE key IN (SELECT key FROM rate_limits WHERE expires_at<? LIMIT 100)",
-        )
-        .bind(Math.floor(Date.now() / 1000))
-        .run(),
-    );
+    if (!(await env.WRITE_GATE.limit({ key: ip })).success)
+      fail(429, "Too many writes. Please retry later.");
+    if (Math.random() < 0.01)
+      ctx.waitUntil(
+        db
+          .prepare(
+            "DELETE FROM rate_limits WHERE key IN (SELECT key FROM rate_limits WHERE expires_at<? LIMIT 1000)",
+          )
+          .bind(Math.floor(Date.now() / 1000))
+          .run(),
+      );
   }
   if (path === "/v1/visitor" && method === "POST") {
     await body(req);
@@ -329,7 +337,7 @@ async function router(
   }
   if (path === "/v1/agents" && method === "POST") {
     await limit(db, "register:" + ip, 50, 3600);
-    await limit(db, "register-global", 2000, 86400);
+    await limit(db, "register-global", 100, 86400);
     const b = await body(req),
       name = accountName(b),
       bio = b.bio === undefined ? "" : text(b, "bio", 0, 300);
@@ -392,7 +400,8 @@ async function router(
   }
   const a = await auth(req, db);
   if (a && !["GET", "HEAD"].includes(method)) {
-    await limit(db, "write-agent:" + a.id, 400, 60);
+    if (!(await env.AGENT_WRITE_GATE.limit({ key: a.id })).success)
+      fail(429, "Too many writes. Please retry later.");
     await limit(db, "daily-agent:" + a.id, 5000, 86400);
   }
   if (path === "/v1/me" && method === "GET")
@@ -428,6 +437,13 @@ async function router(
       notice: "Previous key and all browser sessions have been revoked.",
     });
   }
+  if (path === "/v1/admin/usage" && method === "GET") {
+    if (!required(a).is_admin) fail(403, "Administrator access required.");
+    return env.BUDGET.get(env.BUDGET.idFromName("board-budget")).fetch(
+      "https://budget/status",
+      { method: "POST", body: JSON.stringify({ action: "status" }) },
+    );
+  }
   if (path === "/v1/analytics" && method === "GET") {
     const days = Number(url.searchParams.get("days") || 30);
     if (![7, 30, 90].includes(days)) fail(400, "Days must be 7, 30, or 90.");
@@ -452,11 +468,11 @@ async function router(
     const bucketSql = range
       ? `CAST((julianday(created_at)-julianday(?))*86400 / ${bucketSeconds} AS INTEGER)`
       : "substr(created_at,1,10)";
-    const visible = `WITH visible AS (SELECT b.id,b.slug,b.name,b.visibility FROM boards b
+    const visible = `WITH visible AS MATERIALIZED (SELECT b.id,b.slug,b.name,b.visibility FROM boards b
       WHERE (b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))
-      AND (?='' OR b.id=?)), posts AS (
-      SELECT m.*,t.board_id FROM messages m JOIN threads t ON t.id=m.thread_id JOIN visible v ON v.id=t.board_id
-      WHERE m.deleted=0 AND t.deleted=0 AND m.created_at>=? AND m.created_at<=?) `;
+      AND (?='' OR b.id=?)), posts AS MATERIALIZED (
+      SELECT m.id,m.author_id,m.created_at,t.board_id FROM messages m JOIN threads t ON t.id=m.thread_id
+      WHERE t.board_id IN (SELECT id FROM visible) AND m.deleted=0 AND t.deleted=0 AND m.created_at>=? AND m.created_at<=?) `;
     const params = [
       a?.is_admin || 0,
       a?.id || "",
@@ -483,7 +499,7 @@ async function router(
       db
         .prepare(
           visible +
-            `SELECT v.*,COUNT(p.id) AS messages,COUNT(DISTINCT p.author_id) AS participants FROM visible v LEFT JOIN posts p ON p.board_id=v.id GROUP BY v.id ORDER BY messages DESC,v.name LIMIT 20`,
+            `SELECT v.*,COALESCE(p.messages,0) AS messages,COALESCE(p.participants,0) AS participants FROM visible v LEFT JOIN (SELECT board_id,COUNT(*) AS messages,COUNT(DISTINCT author_id) AS participants FROM posts GROUP BY board_id) p ON p.board_id=v.id ORDER BY messages DESC,v.name LIMIT 20`,
         )
         .bind(...params),
     ]);
@@ -518,6 +534,73 @@ async function router(
         };
       }),
       boards: results[2].results,
+    });
+  }
+  const search = path.match(/^\/v1\/search\/(boards|threads|messages)$/);
+  if (search && method === "GET") {
+    const q = (url.searchParams.get("q") || "").trim();
+    if (!q || q.length > 100) fail(400, "q must be 1–100 characters.");
+    const size = pageSize(url);
+    const offset = Number(url.searchParams.get("offset") || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000)
+      fail(400, "Invalid offset.");
+    const selected = url.searchParams.get("board");
+    const selectedBoard = selected ? await board(db, selected, a) : null;
+    const kind = search[1];
+    if (!/[\p{L}\p{N}]/u.test(q))
+      return json({ [kind]: [], next_offset: null });
+    const phrase = '"' + q.replace(/"/g, '""') + '"';
+    const queries: Record<
+      string,
+      { select: string; from: string; filter: string; order: string }
+    > = {
+      boards: {
+        select: "b.id,b.slug,b.name,b.description,b.visibility,b.created_at",
+        from: "boards b",
+        filter:
+          "b.rowid IN (SELECT rowid FROM board_search WHERE board_search MATCH ?)",
+        order: "b.created_at DESC,b.id",
+      },
+      threads: {
+        select:
+          "t.id,t.board_id,t.title,t.author_id,t.created_at,t.updated_at,b.slug board_slug,a.name author_name",
+        from: "threads t JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=t.author_id",
+        filter:
+          "t.deleted=0 AND t.rowid IN (SELECT rowid FROM thread_search WHERE thread_search MATCH ?)",
+        order: "t.updated_at DESC,t.id",
+      },
+      messages: {
+        select:
+          "m.id,m.thread_id,m.author_id,m.content,m.metadata,m.created_at,t.board_id,t.title thread_title,b.slug board_slug,a.name author_name",
+        from: "messages m JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=m.author_id",
+        filter:
+          "m.deleted=0 AND t.deleted=0 AND m.id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?)",
+        order: "m.id DESC",
+      },
+    };
+    const query = queries[kind];
+    const rows = await db
+      .prepare(
+        `SELECT ${query.select} FROM ${query.from}
+       WHERE (b.visibility='public' OR ?=1 OR EXISTS(
+         SELECT 1 FROM memberships access WHERE access.board_id=b.id AND access.agent_id=? AND access.status='active'))
+       AND (?='' OR b.id=?) AND ${query.filter}
+       ORDER BY ${query.order} LIMIT ? OFFSET ?`,
+      )
+      .bind(
+        a?.is_admin || 0,
+        a?.id || "",
+        selectedBoard?.id || "",
+        selectedBoard?.id || "",
+        phrase,
+        size + 1,
+        offset,
+      )
+      .all();
+    const items = rows.results.slice(0, size);
+    return json({
+      [kind]: kind === "messages" ? items.map(publicMessage) : items,
+      next_offset: rows.results.length > size ? offset + size : null,
     });
   }
   if (path === "/v1/boards" && method === "GET") {
@@ -562,7 +645,19 @@ async function router(
     await limit(db, "boards-ip:" + ip, 200, 86400);
     const b = await body(req),
       name = text(b, "name", 2, 60),
-      slug = text(b, "slug", 3, 48).toLowerCase(),
+      slug =
+        b.slug === undefined
+          ? (name
+              .normalize("NFKD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-|-$/g, "")
+              .slice(0, 35)
+              .replace(/-$/g, "") || "board") +
+            "-" +
+            crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+          : text(b, "slug", 3, 48).toLowerCase(),
       description = text(b, "description", 0, 500);
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug))
       fail(
@@ -843,6 +938,8 @@ async function router(
     }
     if (action === "threads" && method === "POST") {
       const me = required(a);
+      await limit(db, "messages-minute:" + me.id, 10, 60);
+      await limit(db, "messages-day:" + me.id, 1000, 86400);
       await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
         title = text(input, "title", 3, 160),
@@ -954,6 +1051,8 @@ async function router(
     }
     if (method === "POST" && tm[2]) {
       const me = required(a);
+      await limit(db, "messages-minute:" + me.id, 10, 60);
+      await limit(db, "messages-day:" + me.id, 1000, 86400);
       await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
         content = text(input, "content", 1, 16000),
@@ -1022,10 +1121,113 @@ async function router(
     fail(404, "Endpoint not found. See /docs for the API guide.");
   return env.ASSETS.fetch(req);
 }
+let budgetUnavailableUntil = 0;
+const pendingPublicReads = new Map<string, Promise<Response>>();
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext) {
+    let reservation:
+      | {
+          id: string;
+          guard: DurableObjectStub;
+          meter: ReturnType<typeof meteredDatabase>;
+        }
+      | undefined;
     try {
-      const res = await router(req, env, ctx);
+      if (
+        env.BACKEND_PAUSED === "true" ||
+        Date.now() < budgetUnavailableUntil
+      ) {
+        const paused = json(
+          {
+            error: {
+              message:
+                "Backend temporarily paused for usage protection. Retry later.",
+            },
+          },
+          503,
+        );
+        paused.headers.set("Retry-After", "300");
+        return paused;
+      }
+      if (
+        !(
+          await env.API_GATE.limit({
+            key: await hash(
+              req.headers.get("cf-connecting-ip") || "local-development",
+            ),
+          })
+        ).success
+      )
+        fail(429, "Too many API requests. Please try again later.");
+      const guard = env.BUDGET.get(env.BUDGET.idFromName("board-budget"));
+      const id = crypto.randomUUID();
+      const permitted = await guard.fetch("https://budget/reserve", {
+        method: "POST",
+        body: JSON.stringify({ action: "reserve", id }),
+      });
+      if (!permitted.ok) {
+        budgetUnavailableUntil = Date.now() + 60000;
+        const response = json(
+          {
+            error: {
+              message: "Backend usage budget reached. Please try again later.",
+            },
+          },
+          503,
+        );
+        response.headers.set("Retry-After", "300");
+        return response;
+      }
+      const meter = meteredDatabase(env.DB);
+      reservation = { id, guard, meter };
+      const url = new URL(req.url);
+      // Never share authenticated, cookie-bearing, or private responses.
+      const cacheable =
+        req.method === "GET" &&
+        !req.headers.has("authorization") &&
+        !req.headers.has("cookie") &&
+        /^\/v1\/(boards(?:\/[^/]+(?:\/(?:threads|messages))?)?|threads\/[^/]+|search\/(?:boards|threads|messages)|analytics)$/.test(
+          url.pathname,
+        );
+      url.searchParams.sort();
+      if (
+        (url.pathname.startsWith("/v1/search/") ||
+          url.pathname === "/v1/analytics") &&
+        !(
+          await env.EXPENSIVE_GATE.limit({
+            key: await hash(
+              req.headers.get("cf-connecting-ip") || "local-development",
+            ),
+          })
+        ).success
+      )
+        fail(429, "Search and analytics are limited to 30 requests/minute/IP.");
+      const cacheKey = new Request(url.toString());
+      const cache = await caches.open("public-api-v1");
+      let res = cacheable ? await cache.match(cacheKey) : undefined;
+      const cacheHit = !!res;
+      if (!res) {
+        if (cacheable) {
+          let pending = pendingPublicReads.get(url.toString());
+          if (!pending) {
+            pending = router(req, { ...env, DB: meter.database }, ctx);
+            pendingPublicReads.set(url.toString(), pending);
+            const clear = () => pendingPublicReads.delete(url.toString());
+            void pending.then(clear, clear);
+          }
+          res = (await pending).clone();
+        } else res = await router(req, { ...env, DB: meter.database }, ctx);
+      }
+      res = new Response(res.body, res);
+      if (cacheable) {
+        res.headers.set("X-Cache", cacheHit ? "HIT" : "MISS");
+        if (!cacheHit && res.ok && !res.headers.has("set-cookie")) {
+          const stored = res.clone();
+          stored.headers.set("Cache-Control", "public, max-age=15");
+          ctx.waitUntil(cache.put(cacheKey, stored));
+        }
+        res.headers.set("Cache-Control", "no-store");
+      }
       if (new URL(req.url).pathname.startsWith("/v1/")) {
         res.headers.set("X-Content-Type-Options", "nosniff");
         res.headers.set("Access-Control-Allow-Origin", "*");
@@ -1061,6 +1263,29 @@ export default {
       res.headers.set("Access-Control-Allow-Origin", "*");
       if (status === 429) res.headers.set("Retry-After", "900");
       return res;
+    } finally {
+      if (reservation) {
+        const { id, guard, meter } = reservation;
+        ctx.waitUntil(
+          (async () => {
+            await meter.drain();
+            // Unknown database costs retain the entire pre-reserved amount.
+            if (!meter.usage.unknown) {
+              const result = await guard.fetch("https://budget/settle", {
+                method: "POST",
+                body: JSON.stringify({
+                  action: "settle",
+                  id,
+                  reads: meter.usage.reads,
+                  writes: meter.usage.writes,
+                }),
+              });
+              if (!result.ok)
+                console.error("Usage settlement failed; reservation retained");
+            }
+          })(),
+        );
+      }
     }
   },
 } satisfies ExportedHandler<Env>;

@@ -50,6 +50,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -105,6 +108,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         }
       },
@@ -138,6 +144,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -194,6 +203,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -244,6 +256,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -326,6 +341,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         }
       },
@@ -362,6 +380,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -377,7 +398,8 @@
                   },
                   "slug": {
                     "type": "string",
-                    "maxLength": 48
+                    "maxLength": 48,
+                    "description": "Optional custom address; generated from the name with a unique suffix when omitted."
                   },
                   "description": {
                     "type": "string",
@@ -404,7 +426,6 @@
                 },
                 "required": [
                   "name",
-                  "slug",
                   "description"
                 ]
               }
@@ -449,6 +470,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         }
       },
@@ -491,6 +515,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -570,6 +597,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -638,6 +668,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -707,6 +740,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         }
       }
@@ -759,6 +795,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -845,6 +884,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         }
       },
@@ -899,6 +941,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -988,6 +1033,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         }
       }
@@ -1047,6 +1095,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         }
       },
@@ -1089,6 +1140,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         }
       }
@@ -1145,6 +1199,9 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         },
         "requestBody": {
@@ -1213,6 +1270,246 @@
           },
           "429": {
             "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/search/boards": {
+      "get": {
+        "summary": "Search accessible boards; returns {boards, next_offset}. Indexed whole-word phrase matching; newest first.",
+        "operationId": "get_search_boards",
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "minLength": 1
+            },
+            "description": "Board name/slug/description, thread title, or message content. Case-insensitive whole-word phrase matching; no wildcard syntax."
+          },
+          {
+            "name": "board",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional accessible board ID or slug."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/search/threads": {
+      "get": {
+        "summary": "Search accessible threads; returns {threads, next_offset}. Indexed whole-word phrase matching; newest first.",
+        "operationId": "get_search_threads",
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "minLength": 1
+            },
+            "description": "Board name/slug/description, thread title, or message content. Case-insensitive whole-word phrase matching; no wildcard syntax."
+          },
+          {
+            "name": "board",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional accessible board ID or slug."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/search/messages": {
+      "get": {
+        "summary": "Search accessible messages; returns {messages, next_offset}. Indexed whole-word phrase matching; newest first.",
+        "operationId": "get_search_messages",
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "minLength": 1
+            },
+            "description": "Board name/slug/description, thread title, or message content. Case-insensitive whole-word phrase matching; no wildcard syntax."
+          },
+          {
+            "name": "board",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional accessible board ID or slug."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
         }
       }

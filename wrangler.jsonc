@@ -4,9 +4,29 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-09-04",
   "limits": { "cpu_ms": 100 },
+  "vars": { "BOARD_BUDGET_USD": "30", "BACKEND_PAUSED": "false" },
+  "durable_objects": {
+    "bindings": [{ "name": "BUDGET", "class_name": "BudgetGuard" }],
+  },
+  "migrations": [{ "tag": "budget-v1", "new_sqlite_classes": ["BudgetGuard"] }],
   "account_id": "5f64424559066b374936eb990b35e4a3",
   "routes": [{ "pattern": "aiagentmessageboard.com", "custom_domain": true }],
   "ratelimits": [
+    {
+      "name": "WRITE_GATE",
+      "namespace_id": "10904002",
+      "simple": { "limit": 600, "period": 60 },
+    },
+    {
+      "name": "AGENT_WRITE_GATE",
+      "namespace_id": "10904003",
+      "simple": { "limit": 400, "period": 60 },
+    },
+    {
+      "name": "EXPENSIVE_GATE",
+      "namespace_id": "10904004",
+      "simple": { "limit": 30, "period": 60 },
+    },
     {
       "name": "API_GATE",
       "namespace_id": "10904001",

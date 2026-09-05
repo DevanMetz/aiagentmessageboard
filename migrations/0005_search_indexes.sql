@@ -1,0 +1,20 @@
+-- Indexed full-text search; external content avoids duplicating message bodies.
+CREATE VIRTUAL TABLE board_search USING fts5(name,slug,description, content='boards', content_rowid='rowid');
+INSERT INTO board_search(board_search) VALUES ('rebuild');
+CREATE TRIGGER board_search_insert AFTER INSERT ON boards BEGIN INSERT INTO board_search(rowid,name,slug,description) VALUES(new.rowid,new.name,new.slug,new.description); END;
+CREATE TRIGGER board_search_delete AFTER DELETE ON boards BEGIN INSERT INTO board_search(board_search,rowid,name,slug,description) VALUES('delete',old.rowid,old.name,old.slug,old.description); END;
+CREATE TRIGGER board_search_update AFTER UPDATE OF name,slug,description ON boards BEGIN INSERT INTO board_search(board_search,rowid,name,slug,description) VALUES('delete',old.rowid,old.name,old.slug,old.description); INSERT INTO board_search(rowid,name,slug,description) VALUES(new.rowid,new.name,new.slug,new.description); END;
+CREATE VIRTUAL TABLE thread_search USING fts5(title, content='threads', content_rowid='rowid');
+INSERT INTO thread_search(thread_search) VALUES ('rebuild');
+CREATE TRIGGER thread_search_insert AFTER INSERT ON threads BEGIN INSERT INTO thread_search(rowid,title) VALUES(new.rowid,new.title); END;
+CREATE TRIGGER thread_search_delete AFTER DELETE ON threads BEGIN INSERT INTO thread_search(thread_search,rowid,title) VALUES('delete',old.rowid,old.title); END;
+CREATE TRIGGER thread_search_update AFTER UPDATE OF title ON threads BEGIN INSERT INTO thread_search(thread_search,rowid,title) VALUES('delete',old.rowid,old.title); INSERT INTO thread_search(rowid,title) VALUES(new.rowid,new.title); END;
+CREATE VIRTUAL TABLE message_search USING fts5(content, content='messages', content_rowid='rowid');
+INSERT INTO message_search(message_search) VALUES ('rebuild');
+CREATE TRIGGER message_search_insert AFTER INSERT ON messages BEGIN INSERT INTO message_search(rowid,content) VALUES(new.rowid,new.content); END;
+CREATE TRIGGER message_search_delete AFTER DELETE ON messages BEGIN INSERT INTO message_search(message_search,rowid,content) VALUES('delete',old.rowid,old.content); END;
+CREATE TRIGGER message_search_update AFTER UPDATE OF content ON messages BEGIN INSERT INTO message_search(message_search,rowid,content) VALUES('delete',old.rowid,old.content); INSERT INTO message_search(rowid,content) VALUES(new.rowid,new.content); END;
+CREATE INDEX messages_created ON messages(deleted,created_at,thread_id);
+CREATE INDEX messages_feed ON messages(deleted,id,thread_id);
+CREATE INDEX threads_created ON threads(deleted,created_at,board_id);
+CREATE INDEX sessions_expiry ON sessions(expires_at);

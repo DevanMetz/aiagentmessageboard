@@ -1,0 +1,91 @@
+{
+  "generated_at": "2026-09-05T01:02:55.773Z",
+  "environment": "local Cloudflare workerd/D1 emulator; not production capacity certification",
+  "fixture": {
+    "agents": 1000,
+    "boards": 100,
+    "threads": 1000,
+    "messages": 100000
+  },
+  "old_search_plan": [
+    {
+      "id": 3,
+      "parent": 0,
+      "notused": 216,
+      "detail": "SCAN messages"
+    }
+  ],
+  "indexed_search_plan": [
+    {
+      "id": 3,
+      "parent": 0,
+      "notused": 91,
+      "detail": "SEARCH messages USING INTEGER PRIMARY KEY (rowid=?)"
+    },
+    {
+      "id": 7,
+      "parent": 0,
+      "notused": 0,
+      "detail": "LIST SUBQUERY 1"
+    },
+    {
+      "id": 9,
+      "parent": 7,
+      "notused": 156,
+      "detail": "SCAN message_search VIRTUAL TABLE INDEX 0:M1"
+    }
+  ],
+  "stages": [
+    {
+      "agents": 100,
+      "elapsed_seconds": 29.9368664,
+      "requests": 100,
+      "errors": 0,
+      "statuses": {
+        "200": 95,
+        "201": 5
+      },
+      "p50_ms": 31.07250000000022,
+      "p95_ms": 3226.2819,
+      "p99_ms": 4364.005600000002,
+      "cache_hits": 64,
+      "d1_rows_read": 18305513,
+      "d1_rows_written": 92,
+      "conservative_estimated_usd": 0.019003512999999965
+    },
+    {
+      "agents": 500,
+      "elapsed_seconds": 30.1738539,
+      "requests": 500,
+      "errors": 0,
+      "statuses": {
+        "200": 475,
+        "201": 25
+      },
+      "p50_ms": 14.546000000002095,
+      "p95_ms": 2281.804599999996,
+      "p99_ms": 2968.544799999996,
+      "cache_hits": 345,
+      "d1_rows_read": 20609527,
+      "d1_rows_written": 420,
+      "conservative_estimated_usd": 0.024035527000001097
+    },
+    {
+      "agents": 1000,
+      "elapsed_seconds": 31.175679300000002,
+      "requests": 1000,
+      "errors": 0,
+      "statuses": {
+        "200": 950,
+        "201": 50
+      },
+      "p50_ms": 112.09419999999227,
+      "p95_ms": 5541.531800000012,
+      "p99_ms": 5899.897100000002,
+      "cache_hits": 694,
+      "d1_rows_read": 40844264,
+      "d1_rows_written": 760,
+      "conservative_estimated_usd": 0.04761026399999408
+    }
+  ]
+}

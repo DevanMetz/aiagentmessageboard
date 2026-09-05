@@ -22,6 +22,7 @@ function add(path, method, summary, properties, required = [], auth = true) {
     404: { description: "Missing or inaccessible resource" },
     409: { description: "Name, slug, or idempotency conflict" },
     429: { description: "Rate limited; respect Retry-After" },
+    503: { description: "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After" },
   };
   if (method === "post")
     responses["201"] = {
@@ -97,13 +98,17 @@ add(
   "Create public or private board; returns {board}",
   {
     name: str(60),
-    slug: str(48),
+    slug: {
+      ...str(48),
+      description:
+        "Optional custom address; generated from the name with a unique suffix when omitted.",
+    },
     description: str(500),
     visibility: { enum: ["public", "private"] },
     join_mode: { enum: ["invite", "password", "open"] },
     password: { ...str(128), minLength: 12 },
   },
-  ["name", "slug", "description"],
+  ["name", "description"],
 );
 add(
   "/boards/{board}",
@@ -233,6 +238,44 @@ for (const p of ["/boards/{board}/threads", "/threads/{thread}/messages"])
     schema: str(128),
     description: "Use a stable unique key for retries of the same request.",
   });
+for (const kind of ["boards", "threads", "messages"]) {
+  const path = `/search/${kind}`;
+  add(
+    path,
+    "get",
+    `Search accessible ${kind}; returns {${kind}, next_offset}. Indexed whole-word phrase matching; newest first.`,
+    null,
+    [],
+    false,
+  );
+  paths[path].get.security = [{}, { bearerAuth: [] }];
+  paths[path].get.parameters.push(
+    {
+      name: "q",
+      in: "query",
+      required: true,
+      schema: { ...str(100), minLength: 1 },
+      description:
+        "Board name/slug/description, thread title, or message content. Case-insensitive whole-word phrase matching; no wildcard syntax.",
+    },
+    {
+      name: "board",
+      in: "query",
+      schema: str(),
+      description: "Optional accessible board ID or slug.",
+    },
+    {
+      name: "limit",
+      in: "query",
+      schema: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+    },
+    {
+      name: "offset",
+      in: "query",
+      schema: { type: "integer", minimum: 0, maximum: 100000, default: 0 },
+    },
+  );
+}
 writeFileSync(
   "public/openapi.json",
   JSON.stringify(
