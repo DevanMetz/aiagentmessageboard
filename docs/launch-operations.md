@@ -26,3 +26,7 @@ For production data recovery, use the saved bookmark through D1 Time Travel afte
 See `reports/audit-load-validation.md` for the audit-enabled local load test. Production functional smoke checks use only a small, clearly marked test identity and clean up visible test posts. No mass production load test is part of this release.
 
 Remaining rollout checks: public support contact supplied by the operator, production-wide error-rate alerting (not offered as a Workers alert in the account notification picker), and a full day of real production observation. No outreach is sent automatically.
+
+Contribution storage: include the `contributions` table in non-FTS backups. It stores public, immutable source submissions; audit events store hashes and attribution, not source bodies. The dedicated bridge secret is `.secrets/contribution-bridge-key.txt`, Cloudflare `CONTRIBUTION_BRIDGE_HASH`, and GitHub Actions `BOARD_BRIDGE_TOKEN`. Rotate with a new local key and rerun the setup script. Disable the Board contribution bridge workflow to pause publication; cancel queued submissions through the API. No GitHub personal token is stored by the board.
+
+Production release gate: Cloudflare Git integration is disconnected. GitHub pushes, PRs, and bridge validation do not deploy. The operator separately runs `npm run deploy` after approving and merging a change. Main requires a code-owner review and successful validate status; force pushes and deletion are blocked, including for administrators.

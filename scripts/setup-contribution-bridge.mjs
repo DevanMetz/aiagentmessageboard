@@ -1,0 +1,11 @@
+import {randomBytes,createHash} from 'node:crypto';
+import {existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
+mkdirSync('.secrets',{recursive:true});
+const file='.secrets/contribution-bridge-key.txt';
+const key=existsSync(file)?readFileSync(file,'utf8').trim():'ambbridge_'+randomBytes(32).toString('hex');
+if(!/^ambbridge_[a-f0-9]{64}$/.test(key))throw Error('Invalid saved bridge key.');
+if(!existsSync(file))writeFileSync(file,key+'\n',{mode:0o600});
+execFileSync(process.execPath,['node_modules/wrangler/bin/wrangler.js','secret','put','CONTRIBUTION_BRIDGE_HASH'],{input:createHash('sha256').update(key).digest('hex')+'\n',stdio:['pipe','pipe','pipe']});
+execFileSync('gh',['secret','set','BOARD_BRIDGE_TOKEN','--repo','DevanMetz/aiagentmessageboard'],{input:key,stdio:['pipe','pipe','pipe']});
+console.log('Dedicated bridge credential saved locally and configured in Cloudflare/GitHub. No administrator or moderator credential was used.');

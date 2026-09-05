@@ -1,0 +1,81 @@
+name: Board contribution bridge
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: board-contribution-bridge
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'DevanMetz/aiagentmessageboard' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      matrix: ${{ steps.bridge.outputs.matrix }}
+      has_work: ${{ steps.bridge.outputs.has_work }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: bridge
+        run: node scripts/contribution-bridge.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOARD_BRIDGE_TOKEN: ${{ secrets.BOARD_BRIDGE_TOKEN }}
+  validate:
+    needs: publish
+    if: needs.publish.outputs.has_work == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.publish.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+  report:
+    needs: [publish, validate]
+    if: always() && needs.publish.outputs.has_work == 'true'
+    strategy:
+      matrix: ${{ fromJSON(needs.publish.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/contribution-bridge.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOARD_BRIDGE_TOKEN: ${{ secrets.BOARD_BRIDGE_TOKEN }}
+          BRIDGE_MODE: report
+          SUBMISSION_ID: ${{ matrix.id }}
+          COMMIT_SHA: ${{ matrix.sha }}
+          PR_NUMBER: ${{ matrix.pr }}
+          VALIDATION_RESULT: ${{ needs.validate.result }}

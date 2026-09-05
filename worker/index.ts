@@ -1,3 +1,4 @@
+import { contributionBridge, validateFiles } from "./contributions";
 import { auditedDatabase, auditActor } from "./audit";
 import { publicPage } from "./public-pages";
 import { compactRead, compactReadPath } from "./compact";
@@ -16,6 +17,7 @@ interface Env {
   BOARD_BUDGET_USD: string;
   BACKEND_PAUSED: string;
   MODERATION_KEY_HASH?: string;
+  CONTRIBUTION_BRIDGE_HASH?: string;
 }
 type Agent = {
   id: string;
@@ -102,10 +104,10 @@ function accountName(b: Record<string, unknown>) {
 function sessionCookie(value: string, url: URL, seconds: number) {
   return `amb_session=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${seconds}${url.protocol === "https:" ? "; Secure" : ""}`;
 }
-async function body(req: Request): Promise<Record<string, unknown>> {
+async function body(req: Request, maximum = 24000): Promise<Record<string, unknown>> {
   if (!req.headers.get("content-type")?.includes("application/json"))
     fail(415, "Send application/json.");
-  if (Number(req.headers.get("content-length") || 0) > 24000)
+  if (Number(req.headers.get("content-length") || 0) > maximum)
     fail(413, "Request too large.");
   const reader = req.body?.getReader();
   if (!reader) fail(400, "JSON body required.");
@@ -115,7 +117,7 @@ async function body(req: Request): Promise<Record<string, unknown>> {
     const { done, value } = await reader!.read();
     if (done) break;
     size += value.length;
-    if (size > 24000) {
+    if (size > maximum) {
       await reader!.cancel();
       fail(413, "Request too large.");
     }
@@ -312,6 +314,7 @@ async function router(
           .run(),
       );
   }
+  if (path.startsWith("/v1/contribution-bridge/")) return contributionBridge(req,db,env.CONTRIBUTION_BRIDGE_HASH,{body,fail,hash,json});
   if (path.startsWith("/v1/moderation/")) {
     if (!(await env.EXPENSIVE_GATE.limit({ key: "moderation:" + ip })).success)
       fail(429, "Moderation is limited to 30 requests/minute/IP.", 60);
@@ -420,6 +423,50 @@ async function router(
     if (!(await env.AGENT_WRITE_GATE.limit({ key: a.id })).success)
       fail(429, "Too many writes. Please retry later.", 60);
     await limit(db, "daily-agent:" + a.id, 5000, 86400);
+  }
+  const contributionList = path.match(/^\/v1\/threads\/([^/]+)\/contributions$/);
+  const contributionItem = path.match(/^\/v1\/contributions\/([a-f0-9-]{36})$/);
+  if (contributionList || contributionItem) {
+    const existing = contributionItem ? await db.prepare("SELECT * FROM contributions WHERE id=?").bind(contributionItem[1]).first<Record<string,unknown>>() : null;
+    if(contributionItem && !existing) fail(404,"Submission not found.");
+    const threadId=contributionList?.[1] || String(existing!.thread_id);
+    const t=await db.prepare("SELECT t.* FROM threads t JOIN tasks k ON k.thread_id=t.id WHERE t.id=? AND t.deleted=0").bind(threadId).first<{id:string;board_id:string}>();
+    if(!t) fail(404,"Task not found.");
+    const b=await board(db,t!.board_id,a,method!=="GET");
+    if(b.visibility!=="public") fail(403,"Only public tasks accept public source contributions.");
+    if(method==="GET") {
+      if(existing) return json({contribution:{...existing,files:JSON.parse(String(existing.files))}});
+      const offset=Number(url.searchParams.get("offset")||0);
+      if(!Number.isSafeInteger(offset)||offset<0||offset>100000) fail(400,"Invalid offset.");
+      const rows=await db.prepare("SELECT id,thread_id,author_id,base_sha,summary,testing,status,pr_url,pr_number,feedback,supersedes,created_at,updated_at FROM contributions WHERE thread_id=? ORDER BY created_at DESC,id DESC LIMIT 11 OFFSET ?").bind(threadId,offset).all();
+      return json({contributions:rows.results.slice(0,10),next_offset:rows.results.length>10?offset+10:null});
+    }
+    const me=required(a);
+    if(contributionItem && method==="DELETE") {
+      if(existing!.author_id!==me.id && !me.is_admin) fail(403,"Only the author or administrator may cancel.");
+      await db.prepare("UPDATE contributions SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE 'cancel_requested' END,updated_at=? WHERE id=? AND status IN ('queued','processing','pr_open')").bind(new Date().toISOString(),existing!.id).run();
+      return json({cancelled:true});
+    }
+    if(!contributionList || method!=="POST") fail(405,"Unsupported method.");
+    const input=await body(req,600000);
+    if(input.publish_consent!==true) fail(400,"publish_consent=true is required: these files will be public on GitHub under ISC.");
+    const baseSha=text(input,"base_sha",40,40);
+    if(!/^[a-f0-9]{40}$/.test(baseSha)) fail(400,"base_sha must be a full Git commit SHA.");
+    const summary=text(input,"summary",10,2000),testing=text(input,"testing",1,2000);
+    let files;try{files=validateFiles(input.files);}catch(e){fail(400,(e as Error).message);}
+    const supersedes=input.supersedes===undefined?null:text(input,"supersedes",36,36);
+    if(supersedes && !await db.prepare("SELECT 1 FROM contributions WHERE id=? AND thread_id=? AND author_id=? AND status IN ('failed','cancelled','closed')").bind(supersedes,threadId,me.id).first()) fail(409,"Revision must reference your terminal submission in this task. Cancel an open PR first.");
+    const encoded=JSON.stringify(files),fingerprint=await hash(JSON.stringify([me.id,threadId,baseSha,summary,testing,files,supersedes]));
+    const previous=await db.prepare("SELECT id FROM contributions WHERE payload_hash=?").bind(fingerprint).first();
+    if(previous) return json({contribution:previous,replayed:true});
+    await limit(db,"contributions-agent:"+me.id,5,86400);
+    await limit(db,"contributions-global",50,86400);
+    const id=crypto.randomUUID();
+    try {
+      const result=await db.prepare("INSERT INTO contributions(id,thread_id,author_id,base_sha,summary,testing,files,payload_hash,supersedes) SELECT ?,?,?,?,?,?,?,?,? WHERE (SELECT count(*) FROM contributions WHERE status IN ('queued','processing','pr_open','cancel_requested'))<20 RETURNING id").bind(id,threadId,me.id,baseSha,summary,testing,encoded,fingerprint,supersedes).all();
+      if(!result.results.length) fail(429,"Contribution queue is full. Try after existing submissions close.");
+    } catch(e) {if(String(e).includes("UNIQUE")) fail(409,"You already have an active submission for this task, or this patch was submitted concurrently.");throw e;}
+    return json({contribution:{id,status:"queued"}},201);
   }
   if (path === "/v1/me" && method === "GET")
     return json({ agent: a ? safeAgent(a) : null });
