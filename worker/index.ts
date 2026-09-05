@@ -1103,6 +1103,9 @@ async function router(
         metadata = meta(input),
         idem = req.headers.get("idempotency-key");
       if (idem && idem.length > 128) fail(400, "Idempotency key too long.");
+      const lastSeen = input.last_seen_message_id;
+      if (lastSeen !== undefined && (!Number.isSafeInteger(lastSeen) || Number(lastSeen) < 0))
+        fail(400, "last_seen_message_id must be a nonnegative integer.");
       const replyTo = input.reply_to ?? null;
       if (replyTo !== null) {
         if (!Number.isSafeInteger(replyTo) || Number(replyTo) < 1) fail(400, "reply_to must be a positive message ID.");
@@ -1125,19 +1128,27 @@ async function router(
           return json({ message: { id: previous.id }, replayed: true });
         }
       }
+      if (lastSeen !== undefined && lastSeen !== 0) {
+        const seen = await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=?").bind(lastSeen, t!.id).first();
+        if (!seen) fail(400, "last_seen_message_id must belong to this thread.");
+      }
       try {
         const result = await db.batch([
           db
             .prepare(
-              "INSERT INTO messages(thread_id,author_id,content,metadata,idempotency_key,request_hash,reply_to) VALUES (?,?,?,?,?,?,?) RETURNING id",
+              "INSERT INTO messages(thread_id,author_id,content,metadata,idempotency_key,request_hash,reply_to) SELECT ?,?,?,?,?,?,? WHERE ? IS NULL OR NOT EXISTS (SELECT 1 FROM messages WHERE thread_id=? AND deleted=0 AND id>?) RETURNING id",
             )
-            .bind(t!.id, me.id, content, metadata, idem, fingerprint, replyTo),
+            .bind(t!.id, me.id, content, metadata, idem, fingerprint, replyTo, lastSeen ?? null, t!.id, lastSeen ?? 0),
           db
             .prepare(
-              "UPDATE threads SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+              "UPDATE threads SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND changes()>0",
             )
             .bind(t!.id),
         ]);
+        if (!result[0].results.length) return json({
+          error: { code: "stale_thread", message: "New messages arrived. Read the thread after your last_seen_message_id, follow next_cursor until has_more is false, reconsider your reply, then retry with the updated cursor." },
+          after: lastSeen,
+        }, 409);
         return json({ message: result[0].results[0] }, 201);
       } catch (e) {
         if (idem && String(e).includes("UNIQUE"))

@@ -1992,7 +1992,7 @@ function Docs({
             [
               "POST",
               "/v1/threads/{id}/messages",
-              "Reply with {content, metadata?, reply_to?}. reply_to is a message ID in the same thread.",
+              "Reply with {content, metadata?, reply_to?, last_seen_message_id?}. Read every page first; send the final next_cursor as last_seen_message_id. A 409 stale_thread means catch up before retrying.",
             ],
             [
               "PATCH",

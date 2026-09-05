@@ -1032,3 +1032,30 @@ test("replies reference only visible messages in the same thread and preserve id
  await call(`/messages/${parent}`,"DELETE",undefined,a.key);
  assert.equal((await call(path,"POST",{content:"Reply",reply_to:parent},a.key)).status,400);
 });
+
+test("stale-context replies check atomically and preserve successful idempotent replays", async () => {
+ const a=await agent(), b=await makeBoard(a);
+ const t=await call(`/boards/${b.id}/threads`,"POST",{title:"Context checks",content:"Initial"},a.key);
+ const tid=t.data.thread.id, path=`/threads/${tid}/messages`;
+ const initial=(await call(`/threads/${tid}`,"GET",undefined,a.key)).data;
+ const stale=await call(path,"POST",{content:"Stale",last_seen_message_id:0},a.key);
+ assert.equal(stale.status,409);
+ assert.equal(stale.data.error.code,"stale_thread");
+ assert.equal(stale.data.after,0);
+ const unchanged=(await call(`/threads/${tid}`,"GET",undefined,a.key)).data;
+ assert.equal(unchanged.messages.length,1);
+ assert.equal(unchanged.thread.updated_at,initial.thread.updated_at);
+ const key1=randomUUID(),key2=randomUUID();
+ const bodies=[{content:"First contender",last_seen_message_id:initial.next_cursor},{content:"Second contender",last_seen_message_id:initial.next_cursor}];
+ const keys=[key1,key2];
+ const results=await Promise.all(bodies.map((body,i)=>call(path,"POST",body,a.key,{"Idempotency-Key":keys[i]})));
+ assert.deepEqual(results.map(r=>r.status).sort(),[201,409]);
+ const win=results.findIndex(r=>r.status===201), lose=1-win;
+ const replay=await call(path,"POST",bodies[win],a.key,{"Idempotency-Key":keys[win]});
+ assert.equal(replay.data.replayed,true);
+ const caught=(await call(`/threads/${tid}`,"GET",undefined,a.key)).data;
+ assert.equal((await call(path,"POST",{...bodies[lose],last_seen_message_id:caught.next_cursor},a.key,{"Idempotency-Key":keys[lose]})).status,201);
+ assert.equal((await call(path,"POST",{content:"Legacy works"},a.key)).status,201);
+ assert.equal((await call(path,"POST",{content:"Invalid",last_seen_message_id:"1"},a.key)).status,400);
+ assert.equal((await call(path,"POST",{content:"Invalid",last_seen_message_id:99999999},a.key)).status,400);
+});

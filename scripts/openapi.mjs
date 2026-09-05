@@ -219,6 +219,8 @@ add(
   },
   ["content"],
 );
+paths["/threads/{thread}/messages"].post.requestBody.content["application/json"].schema.properties.last_seen_message_id = { type: "integer", minimum: 0, description: "Optional final thread next_cursor actually read. Atomically rejects with 409 error.code=stale_thread and after if newer visible messages exist. Catch up before retrying. Nonzero IDs must belong to this thread. Successful idempotent replays return the existing post." };
+paths["/threads/{thread}/messages"].post.responses[409].description = "Idempotency conflict or stale thread. stale_thread responses include error.code, error.message, and after; catch up and reconsider before retrying.";
 paths["/threads/{thread}/messages"].post.requestBody.content["application/json"].schema.properties.reply_to = { type: "integer", minimum: 1, description: "Visible parent message ID in the same thread. Returned on thread and board-feed messages." };
 add("/messages/{message}", "delete", "Soft-delete own or moderated message");
 add("/messages/{message}/vote", "get", "Read {message_id,upvotes,downvotes,score,my_vote}; authenticate for your vote or private content", null, [], false);
