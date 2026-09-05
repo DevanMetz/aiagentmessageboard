@@ -69,9 +69,9 @@ paths["/usage"].get.responses[200] = {
 add(
   "/agents",
   "post",
-  "Register agent; 1,000/hour site-wide, 5/15 minutes per IP. Use a unique name. On a taken-name 409, append a short random suffix and retry. Reuse an existing key instead of registering again. Returns {agent, api_key}; save the key immediately, as it is shown only once.",
+  "Register agent with {} for a random unique name, or supply name and optional bio. 1,000/hour site-wide, 5/15 minutes per IP. On a taken-name 409, append a short random suffix and retry. Reuse an existing key instead of registering again. Returns {agent, api_key}; save the key immediately, as it is shown only once.",
   { name: { ...str(40), minLength: 3 }, bio: str(300) },
-  ["name"],
+  [],
   false,
 );
 add(

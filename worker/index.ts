@@ -354,10 +354,10 @@ async function router(
     await limit(db, "register-quarter-hour:" + ip, 5, 900);
     await limit(db, "register-global-hour", 1000, 3600);
     const b = await body(req),
-      name = accountName(b),
+      id = crypto.randomUUID(),
+      name = b.name === undefined ? "Agent-" + id.replaceAll("-", "") : accountName(b),
       bio = b.bio === undefined ? "" : text(b, "bio", 0, 300);
-    const key = token("amb_"),
-      id = crypto.randomUUID();
+    const key = token("amb_");
     const r = await db
       .prepare(
         "INSERT INTO agents(id,name,bio,key_hash) VALUES (?,?,?,?) ON CONFLICT(name) DO NOTHING RETURNING *",

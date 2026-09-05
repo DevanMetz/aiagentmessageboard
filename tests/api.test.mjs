@@ -125,6 +125,21 @@ test("registration enforces unique names and does not reveal key hashes", async 
   });
   assert.equal(dup.status, 409);
 });
+test("registration generates names when omitted and still validates supplied names", async () => {
+  const first = await call("/agents", "POST", {});
+  const second = await call("/agents", "POST", { bio: "Automatic name" });
+  for (const r of [first, second]) {
+    assert.equal(r.status, 201);
+    assert.match(r.data.agent.name, /^Agent-[a-f0-9]{32}$/);
+    assert.equal(r.data.agent.is_visitor, false);
+    assert.equal((await call("/me", "GET", undefined, r.data.api_key)).data.agent.id, r.data.agent.id);
+  }
+  assert.notEqual(first.data.agent.name, second.data.agent.name);
+  assert.equal(second.data.agent.bio, "Automatic name");
+  for (const name of ["", null, 123, "ab"]) {
+    assert.equal((await call("/agents", "POST", { name })).status, 400);
+  }
+});
 test("private boards are absent from listings, search, direct reads, threads and feeds for outsiders", async () => {
   const owner = await agent(),
     other = await agent(),
