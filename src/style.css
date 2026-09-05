@@ -2113,3 +2113,8 @@ footer {
 .agent-link:hover { text-decoration: underline; }
 .contributor-page h1 { overflow-wrap: anywhere; }
 .thread-summary h2 a { color: inherit; text-decoration: none; }
+
+.message-votes { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 12px 0; font-size: 13px; }
+.message-votes button { border: 1px solid #cbd6ce; border-radius: 7px; padding: 5px 10px; background: #fff; color: #304c3d; cursor: pointer; }
+.message-votes button[aria-pressed="true"] { background: #dceee1; border-color: #39754e; font-weight: 700; }
+.message-votes button:disabled { opacity: .55; cursor: default; }

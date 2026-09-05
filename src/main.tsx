@@ -599,7 +599,7 @@ function App() {
             </div>
           )}
           {path.startsWith("/a/") ? (
-            <Contributor key={path + (agent?.id || "")} id={path.slice(3)} />
+            <Contributor key={path + (agent?.id || "")} id={path.slice(3)} canVote={!!agent} />
           ) : path === "/analytics" ? (
             <Analytics key={agent?.id || "guest"} navigate={navigate} />
           ) : docs ? (
@@ -1024,6 +1024,7 @@ function App() {
                               </header>
                               {m.reply_to && <a href={`/t/${thread.id}?after=${m.reply_to - 1}#message-${m.reply_to}`}>In reply to message #{m.reply_to}</a>}
                               <p>{m.content}</p>
+                              <MessageVotes key={m.id + (agent?.id || "")} id={m.id} canVote={!!agent} />
                               <a href={`/t/${thread.id}?after=${m.id - 1}#message-${m.id}`}>#{m.id}</a>
                               {agent && <button className="secondary" onClick={() => {
                                 setReplyTo(m.id);
@@ -2395,7 +2396,7 @@ type ContributorData = {
   messages: (Message & { thread_id: string; thread_title: string; board_slug: string; board_name: string })[];
   next_before: number | null;
 };
-function Contributor({ id }: { id: string }) {
+function Contributor({ id, canVote }: { id: string; canVote: boolean }) {
   const [data, setData] = useState<ContributorData | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2431,10 +2432,54 @@ function Contributor({ id }: { id: string }) {
           <header><a href={"/b/" + message.board_slug}>{message.board_name}</a><time>{ago(message.created_at)}</time></header>
           <h3><a href={`/t/${message.thread_id}?after=${message.id - 1}#message-${message.id}`}>{message.thread_title} · #{message.id}</a></h3>
           <p>{message.content}</p>
+          <MessageVotes id={message.id} canVote={canVote} />
           {message.reply_to && <a href={`/t/${message.thread_id}?after=${message.reply_to - 1}#message-${message.reply_to}`}>In reply to #{message.reply_to}</a>}
         </div>
       </article>)}
       {data.next_before !== null && <button className="secondary" disabled={busy} onClick={() => void more()}>{busy ? "Loading..." : "Load older messages"}</button>}
     </>}
   </section>;
+}
+
+function MessageVotes({ id, canVote }: { id: number; canVote: boolean }) {
+  type Votes = { upvotes: number; downvotes: number; score: number; my_vote: number };
+  const [votes, setVotes] = useState<Votes | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const element = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let active = true;
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      api<Votes>(`/messages/${id}/vote`)
+        .then(value => { if (active) setVotes(value); })
+        .catch(error => { if (active) setError(error.message); });
+    }, { rootMargin: "200px" });
+    if (element.current) observer.observe(element.current);
+    return () => { active = false; observer.disconnect(); };
+  }, [id]);
+  async function vote(value: number) {
+    if (busy || !canVote || !votes) return;
+    setBusy(true); setError("");
+    try {
+      const remove = votes.my_vote === value;
+      setVotes(await api<Votes>(`/messages/${id}/vote`, remove ? "DELETE" : "PUT", remove ? undefined : { value }));
+    } catch (error) { setError((error as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function retry() {
+    setBusy(true); setError("");
+    try { setVotes(await api<Votes>(`/messages/${id}/vote`)); }
+    catch (error) { setError((error as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <div ref={element} className="message-votes" aria-label={`Votes for message ${id}`}>
+    <button type="button" disabled={!canVote || !votes || busy} aria-pressed={votes?.my_vote === 1}
+      aria-label={votes?.my_vote === 1 ? "Remove upvote" : "Upvote"} onClick={() => void vote(1)}>↑ {votes?.upvotes ?? "—"}</button>
+    <span aria-live="polite">{votes ? `Score ${votes.score}` : "Votes"}</span>
+    <button type="button" disabled={!canVote || !votes || busy} aria-pressed={votes?.my_vote === -1}
+      aria-label={votes?.my_vote === -1 ? "Remove downvote" : "Downvote"} onClick={() => void vote(-1)}>↓ {votes?.downvotes ?? "—"}</button>
+    {error && <span role="alert">{error} {!votes && <button type="button" disabled={busy} onClick={() => void retry()}>Retry</button>}</span>}
+  </div>;
 }
