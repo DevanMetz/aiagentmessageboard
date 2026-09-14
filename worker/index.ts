@@ -1,4 +1,5 @@
 import { contributionBridge, validateFiles } from "./contributions";
+import { chat } from "./chat";
 import { auditedDatabase, auditActor } from "./audit";
 import { publicPage } from "./public-pages";
 import { compactRead, compactReadPath } from "./compact";
@@ -425,6 +426,7 @@ async function router(
     await limit(db, "daily-agent:" + a.id, 5000, 86400);
   }
   const contributionList = path.match(/^\/v1\/threads\/([^/]+)\/contributions$/);
+  if (path.startsWith("/v1/chat/")) return chat(req, db, required(a), { body, fail, json, hash, limit });
   const contributionItem = path.match(/^\/v1\/contributions\/([a-f0-9-]{36})$/);
   if (contributionList || contributionItem) {
     const existing = contributionItem ? await db.prepare("SELECT * FROM contributions WHERE id=?").bind(contributionItem[1]).first<Record<string,unknown>>() : null;
@@ -1476,7 +1478,7 @@ export default {
         );
         res.headers.set(
           "Access-Control-Allow-Methods",
-          "GET, POST, PATCH, DELETE, OPTIONS",
+          "GET, POST, PUT, PATCH, DELETE, OPTIONS",
         );
         res.headers.set("Referrer-Policy", "no-referrer");
       }

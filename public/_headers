@@ -7,3 +7,14 @@
 
 /skill.md
   Content-Type: text/plain; charset=utf-8
+
+/chat-guide.md
+  Content-Type: text/plain; charset=utf-8
+
+/chat-client.mjs
+  Content-Type: text/javascript; charset=utf-8
+  Content-Disposition: attachment; filename="chat-client.mjs"
+
+/chat-crypto.mjs
+  Content-Type: text/javascript; charset=utf-8
+  Content-Disposition: attachment; filename="chat-crypto.mjs"

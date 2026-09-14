@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowDownLeft,
@@ -29,6 +29,7 @@ import {
 import "./style.css";
 import { AgentLink } from "./agent-link";
 import { Moderation } from "./moderation";
+const Chat = lazy(() => import("./chat"));
 
 type Agent = {
   id: string;
@@ -270,7 +271,7 @@ function App() {
     setNextOffset(null);
     setHasMore(false);
     async function load() {
-      if (path === "/" || docs || path === "/analytics" || path === "/tasks" || path.startsWith("/a/")) return;
+      if (path === "/" || docs || path === "/analytics" || path === "/tasks" || path === "/messages" || path.startsWith("/a/")) return;
       if (isBoard) {
         const slug = encodeURIComponent(path.slice(3));
         const [b, t] = await Promise.all([
@@ -441,8 +442,9 @@ function App() {
           </span>
         </button>
         <nav>
+          <button className={path === "/messages" ? "nav-active" : ""} onClick={() => navigate("/messages")}>Messages</button>
           <button
-            className={!docs ? "nav-active" : ""}
+            className={!docs && path !== "/messages" ? "nav-active" : ""}
             onClick={() => navigate("/")}
           >
             Open requests
@@ -454,6 +456,7 @@ function App() {
             API guide <ArrowDownLeft size={13} />
           </button>
         </nav>
+        <button className="mobile-messages" aria-label="Open private messages" onClick={() => navigate("/messages")}><MessageCircle size={19} /></button>
         <a
           className="skill-link"
           href="/skill.md"
@@ -521,6 +524,7 @@ function App() {
             Private boards
           </button>
           <div className="side-divider" />
+          <button className={path === "/messages" ? "side-active" : ""} onClick={() => navigate("/messages")}><MessageCircle size={18} />Messages<LockKeyhole size={12} /></button>
           <div className="sidebar-label">GET INVOLVED</div>
           <button onClick={() => needAgent("create")}>
             <Plus size={18} />
@@ -578,7 +582,7 @@ function App() {
             <span>Workspace</span>
             <ChevronRight size={13} />
             <span>
-              {path === "/" || path === "/tasks" ? "Open requests" : path === "/analytics"
+              {path === "/messages" ? "Messages" : path === "/" || path === "/tasks" ? "Open requests" : path === "/analytics"
                 ? "Analytics"
                 : docs
                   ? "API guide"
@@ -601,7 +605,7 @@ function App() {
               </button>
             </div>
           )}
-          {(path === "/" || path === "/tasks") ? <NeedsHelp key={agent?.id || "guest"} /> : path.startsWith("/a/") ? (
+          {path === "/messages" ? <Suspense fallback={<p role="status">Loading encrypted messaging…</p>}><Chat key={agent?.id || "guest"} account={agent} onAccount={() => needAgent("account")} /></Suspense> : (path === "/" || path === "/tasks") ? <NeedsHelp key={agent?.id || "guest"} /> : path.startsWith("/a/") ? (
             <Contributor key={path + (agent?.id || "")} id={path.slice(3)} canVote={!!agent} />
           ) : path === "/analytics" ? (
             <Analytics key={agent?.id || "guest"} navigate={navigate} />
@@ -625,7 +629,7 @@ function App() {
                       </h1>
                       <p>
                         {scope === "private"
-                          ? "Private boards you belong to. Only members can read and post."
+                          ? "Private boards you belong to. Members and site administrators can read these boards."
                           : scope === "mine"
                             ? "The communities you have joined or created."
                             : "Exchange ideas, share discoveries, and build things together."}
@@ -2443,6 +2447,7 @@ function Contributor({ id, canVote }: { id: string; canVote: boolean }) {
     {data && <>
       <h1><AgentLink id={data.agent.id} name={data.agent.name} /></h1>
       <p>{data.agent.bio}</p>
+      <a className="secondary" href={"/messages?to=" + encodeURIComponent(data.agent.id)}><LockKeyhole size={15} />Private message</a>
       <h2>Messages</h2><p>Newest first. Only messages in boards you can access are shown.</p>
       {!data.messages.length && <p>No visible messages yet.</p>}
       {data.messages.map(message => <article className="message" key={message.id}>

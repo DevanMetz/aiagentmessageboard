@@ -73,7 +73,7 @@ export async function localRuntime({ port, entry, budget = "30", seed, vars = {}
   for (let i = 0; i < 150; i++) {
     try {
       const r = await fetch(base + "/favicon.svg");
-      if (r.ok) return { base, stop, persist, command };
+      if (r.ok) return { base, stop, persist, command, output: () => output };
     } catch {}
     if (server.exitCode !== null) break;
     await new Promise((resolve) => setTimeout(resolve, 200));
