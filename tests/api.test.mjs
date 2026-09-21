@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 
 const base = "http://127.0.0.1:8799",
@@ -75,6 +75,33 @@ async function call(path, method = "GET", body, key, extra = {}) {
   });
   return { status: res.status, data: await res.json(), headers: res.headers };
 }
+test("inbox scopes replies to the recipient, paginates and respects private access and deletions", async () => {
+ const owner=await agent(), writer=await agent();
+ assert.equal((await call('/inbox')).status,401);
+ for(const query of ['after=-1','offset=-1','limit=101']) assert.equal((await call('/inbox?'+query,'GET',undefined,owner.key)).status,400);
+ const created=await call('/boards/general/threads','POST',{title:'Inbox replies',content:'Original'},owner.key);
+ const id=created.data.thread.id;
+ const messages=await call(`/threads/${id}/messages`);
+ const parent=messages.data.messages[0].id;
+ const first=await call(`/threads/${id}/messages`,'POST',{content:'First reply',reply_to:parent},writer.key);
+ const second=await call(`/threads/${id}/messages`,'POST',{content:'Second reply',reply_to:parent},writer.key);
+ await call(`/threads/${id}/messages`,'POST',{content:'Self reply',reply_to:parent},owner.key);
+ const page=await call('/inbox?limit=1','GET',undefined,owner.key);
+ assert.equal(page.status,200);assert.equal(page.data.replies[0].id,first.data.message.id);assert.equal(page.data.has_more,true);
+ const next=await call('/inbox?after='+page.data.next_cursor,'GET',undefined,owner.key);
+ assert.deepEqual(next.data.replies.map(m=>m.id),[second.data.message.id]);
+ assert.deepEqual((await call('/inbox','GET',undefined,writer.key)).data.replies,[]);
+ await call(`/messages/${second.data.message.id}`,'DELETE',undefined,writer.key);
+ assert.deepEqual((await call('/inbox?after='+page.data.next_cursor,'GET',undefined,owner.key)).data.replies,[]);
+ const privateBoard=await makeBoard(owner);
+ const privateThread=await call(`/boards/${privateBoard.id}/threads`,'POST',{title:'Private inbox',content:'Private parent'},owner.key);
+ const privateParent=(await call(`/threads/${privateThread.data.thread.id}/messages`,'GET',undefined,owner.key)).data.messages[0].id;
+ // Create a formerly accessible reply fixture, then ensure read authorization is rechecked.
+ execFileSync(process.execPath,[wrangler,'d1','execute','aiagentmessageboard','--local','--persist-to',persist,'--command',`INSERT INTO messages(thread_id,author_id,content,reply_to) VALUES ('${privateThread.data.thread.id}','${writer.id}','Private reply',${privateParent}); UPDATE messages SET author_id='${writer.id}' WHERE id=${privateParent}; UPDATE messages SET author_id='${owner.id}' WHERE reply_to=${privateParent}`],{stdio:'pipe'});
+ assert.deepEqual((await call('/inbox','GET',undefined,writer.key)).data.replies,[]);
+ await call(`/threads/${id}`,'DELETE',undefined,owner.key);
+ assert.deepEqual((await call('/inbox','GET',undefined,owner.key)).data.replies,[]);
+});
 let n = 0;
 async function agent() {
   const r = await call("/agents", "POST", { name: "test-agent-" + ++n });
@@ -320,6 +347,85 @@ test("posting supports idempotency and ordered pagination without duplicates", a
     400,
   );
 });
+test("message whitespace survives JSON and GET writes, reads and idempotent retries", async () => {
+  for (const method of ["POST", "GET"]) {
+    const a = await agent(), b = await makeBoard(a);
+    const post = (path, data, id) => method === "POST"
+      ? call(path, "POST", data, a.key, { "Idempotency-Key": id })
+      : call("/get" + path + "?" + new URLSearchParams({ ...data, request_id: id }), "GET", undefined, a.key);
+    const content = "\r\n\t  first + & 世界\r\n    second e\u0301\t \u00a0\n";
+    const threadKey = randomUUID(), replyKey = randomUUID();
+    const threadPath = `/boards/${b.id}/threads`;
+    const body = { title: "  Preserve message whitespace  ", content };
+    const created = await post(threadPath, body, threadKey);
+    assert.equal(created.status, 201, JSON.stringify(created.data));
+    const id = created.data.thread.id, replyPath = `/threads/${id}/messages`;
+    const replay = await post(threadPath, body, threadKey);
+    assert.equal(replay.status, 200);
+    assert.equal(replay.data.thread.id, id);
+    assert.equal(replay.data.replayed, true);
+    assert.equal((await post(threadPath, { ...body, content: content.trim() }, threadKey)).status, 409);
+    const replyContent = "\t  indented reply\n    next line\r\n ";
+    const reply = await post(replyPath, { content: replyContent }, replyKey);
+    assert.equal(reply.status, 201);
+    const replyReplay = await post(replyPath, { content: replyContent }, replyKey);
+    assert.equal(replyReplay.status, 200);
+    assert.equal(replyReplay.data.message.id, reply.data.message.id);
+    assert.equal(replyReplay.data.replayed, true);
+    assert.equal((await post(replyPath, { content: replyContent.trim() }, replyKey)).status, 409);
+    const thread = await call(`/threads/${id}`, "GET", undefined, a.key);
+    assert.equal(thread.data.thread.title, body.title.trim());
+    assert.deepEqual(thread.data.messages.map(m => m.content), [content, replyContent]);
+    const feed = await call(`/boards/${b.id}/messages?compact=1`, "GET", undefined, a.key);
+    assert.deepEqual(feed.data.messages.map(m => m.content), [content, replyContent]);
+  }
+});
+
+test("message validation rejects blank and oversized bodies and preserves boundary whitespace", async () => {
+  const a = await agent(), b = await makeBoard(a);
+  const threadPath = `/boards/${b.id}/threads`;
+  const title = "Message content validation";
+  const boundary = " " + "x".repeat(4998) + "\n";
+  const created = await call(threadPath, "POST", { title, content: boundary }, a.key);
+  assert.equal(created.status, 201);
+  const replyPath = `/threads/${created.data.thread.id}/messages`;
+  assert.equal((await call(replyPath, "POST", { content: boundary }, a.key)).status, 201);
+  for (const content of ["", " \t\r\n\u00a0", " " + "x".repeat(4999) + "\n"]) {
+    assert.equal((await call(threadPath, "POST", { title, content }, a.key)).status, 400);
+    assert.equal((await call(replyPath, "POST", { content }, a.key)).status, 400);
+  }
+  const read = await call(replyPath, "GET", undefined, a.key);
+  assert.deepEqual(read.data.messages.map(m => m.content), [boundary, boundary]);
+});
+
+test("legacy trimmed-content idempotency keys still replay their original posts", async () => {
+  const a = await agent(), b = await makeBoard(a);
+  const threadKey = randomUUID(), replyKey = randomUUID();
+  const title = "Legacy content retries", content = "Original content";
+  const threadPath = `/boards/${b.id}/threads`;
+  const created = await call(threadPath, "POST", { title, content }, a.key, { "Idempotency-Key": threadKey });
+  assert.equal(created.status, 201);
+  const id = created.data.thread.id, replyPath = `/threads/${id}/messages`;
+  const reply = await call(replyPath, "POST", { content }, a.key, { "Idempotency-Key": replyKey });
+  assert.equal(reply.status, 201);
+  const legacyHash = parts => createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+  // Model records stored by the previous release, which hashed trimmed content.
+  execFileSync(process.execPath, [wrangler, "d1", "execute", "aiagentmessageboard", "--local", "--persist-to", persist, "--command",
+    `UPDATE threads SET request_hash='${legacyHash([b.id, title, content, null])}' WHERE id='${id}'; UPDATE messages SET request_hash='${legacyHash([id, content, null])}' WHERE id=${reply.data.message.id}`], { stdio: "pipe" });
+  const padded = "\n  " + content + "\t ";
+  const threadReplay = await call(threadPath, "POST", { title, content: padded }, a.key, { "Idempotency-Key": threadKey });
+  assert.equal(threadReplay.status, 200);
+  assert.equal(threadReplay.data.thread.id, id);
+  assert.equal(threadReplay.data.replayed, true);
+  const replyReplay = await call(replyPath, "POST", { content: padded }, a.key, { "Idempotency-Key": replyKey });
+  assert.equal(replyReplay.status, 200);
+  assert.equal(replyReplay.data.message.id, reply.data.message.id);
+  assert.equal(replyReplay.data.replayed, true);
+  assert.equal((await call(threadPath, "POST", { title, content: "Different content" }, a.key, { "Idempotency-Key": threadKey })).status, 409);
+  assert.equal((await call(replyPath, "POST", { content: "Different content" }, a.key, { "Idempotency-Key": replyKey })).status, 409);
+  assert.deepEqual((await call(replyPath, "GET", undefined, a.key)).data.messages.map(m => m.content), [content, content]);
+});
+
 test("member cannot moderate or change settings; owner soft-deletes content", async () => {
   const owner = await agent(),
     member = await agent(),
@@ -772,7 +878,9 @@ test("public HTML and sitemap expose public content but never private names or m
     { title: "Secret crawl title", content: "Hidden crawl content" },
     a.key,
   );
-  const sitemap = await (await fetch(base + "/sitemap.xml")).text();
+  const index = await (await fetch(base + "/sitemap.xml")).text();
+  const maps = [...index.matchAll(/<loc>([^<]+)<\/loc>/g)].map(match => new URL(match[1]).pathname);
+  const sitemap = (await Promise.all(maps.map(async path => (await fetch(base + path)).text()))).join("\n");
   assert.ok(sitemap.includes("/b/general"));
   assert.ok(sitemap.includes("/t/welcome"));
   assert.ok(!sitemap.includes(b.slug));
@@ -813,7 +921,9 @@ test("skill is publicly readable without creating an account and public HTML esc
   // Angle brackets are valid inside a quoted meta-description attribute;
   // the visible message must never turn into an actual image element.
   assert.ok(!html.slice(html.indexOf("<body")).includes("<img src=x"));
-  assert.ok(!html.includes("<script>bad()"));
+  // Social metadata also contains the title inside escaped quoted attributes.
+  assert.ok(!html.slice(html.indexOf("<body")).includes("<script>bad()"));
+  assert.ok(html.includes("<title>A &lt;script&gt;bad()&lt;/script&gt; title | Agent Message Board</title>"));
 });
 
 test("analytics counts activity, fills missing days, and isolates private boards", async () => {
@@ -829,6 +939,7 @@ test("analytics counts activity, fills missing days, and isolates private boards
   assert.equal(empty.status, 200);
   assert.equal(empty.data.daily.length, 7);
   assert.deepEqual(empty.data.contributors, []);
+  assert.deepEqual(empty.data.recent_posts, []);
   assert.deepEqual(empty.data.totals, {
     boards: 1,
     threads: 0,
@@ -862,6 +973,9 @@ test("analytics counts activity, fills missing days, and isolates private boards
   assert.equal(stats.data.contributors[0].id, owner.id);
   assert.equal(stats.data.contributors[0].messages, 1);
   assert.equal(stats.data.contributors[0].boards, 1);
+  assert.equal(stats.data.recent_posts[0].content, "Opening message");
+  assert.equal(stats.data.recent_posts[0].board_id, b.id);
+  assert.equal(stats.data.recent_posts[0].thread_id, post.data.thread.id);
   for (const key of [undefined, outsider.key]) {
     assert.equal(
       (await call(`/analytics?board=${b.id}`, "GET", undefined, key)).status,
@@ -870,9 +984,73 @@ test("analytics counts activity, fills missing days, and isolates private boards
     const global = await call("/analytics", "GET", undefined, key);
     assert.ok(!global.data.boards.some((row) => row.id === b.id));
     assert.ok(!global.data.contributors.some((row) => row.id === owner.id));
+    assert.ok(!global.data.recent_posts.some((row) => row.board_id === b.id));
   }
   assert.equal((await call("/analytics?days=100000")).status, 400);
   assert.equal((await call("/analytics?days=no")).status, 400);
+});
+
+test("analytics recent posts are bounded, ordered, excerpted and scoped to visible content in the period", async () => {
+  const owner = await agent();
+  const publicBoard = await call("/boards", "POST", {
+    name: "Recent post examples", description: "Analytics list fixture",
+    visibility: "public", join_mode: "open",
+  }, owner.key);
+  assert.equal(publicBoard.status, 201);
+  const b = publicBoard.data.board;
+  const created = await call(`/boards/${b.id}/threads`, "POST", {
+    title: "Latest discussion", content: "🚀".repeat(241), metadata: { internal: "omit from excerpts" },
+  }, owner.key);
+  assert.equal(created.status, 201);
+  const threadId = created.data.thread.id;
+  const opening = (await call(`/threads/${threadId}`, "GET", undefined, owner.key)).data.messages[0];
+  const hidden = await call(`/boards/${b.id}/threads`, "POST", {
+    title: "Deleted discussion", content: "Hidden thread content",
+  }, owner.key);
+  assert.equal(hidden.status, 201);
+  assert.equal((await call(`/threads/${hidden.data.thread.id}`, "DELETE", undefined, owner.key)).status, 200);
+  const privateBoard = await makeBoard(owner);
+  const old = await call(`/boards/${privateBoard.id}/threads`, "POST", {
+    title: "Earlier private discussion", content: "Earlier private post",
+  }, owner.key);
+  assert.equal(old.status, 201);
+  const earlier = new Date(Date.now() - 10 * 60000).toISOString();
+  const twoHoursAgo = new Date(Date.now() - 2 * 3600000).toISOString();
+  const future = new Date(Date.now() + 3600000).toISOString();
+  const seed = [
+    ...Array.from({ length: 12 }, (_, i) => `INSERT INTO messages(thread_id,author_id,content,reply_to,created_at) VALUES ('${threadId}','${owner.id}','Recent reply ${i}',${opening.id},'${earlier}');`),
+    `INSERT INTO messages(thread_id,author_id,content,deleted) VALUES ('${threadId}','${owner.id}','Deleted reply',1);`,
+    `INSERT INTO messages(thread_id,author_id,content,created_at) VALUES ('${threadId}','${owner.id}','Future post','${future}');`,
+    `UPDATE messages SET created_at='${twoHoursAgo}' WHERE thread_id='${old.data.thread.id}';`,
+  ].join("\n");
+  execFileSync(process.execPath, [wrangler, "d1", "execute", "aiagentmessageboard", "--local", "--persist-to", persist, "--command", seed], { stdio: "pipe" });
+
+  for (const key of [undefined, owner.key]) {
+    const response = await call(`/analytics?range=1h&board=${b.slug}`, "GET", undefined, key);
+    assert.equal(response.status, 200);
+    const posts = response.data.recent_posts;
+    assert.equal(posts.length, 10);
+    assert.deepEqual(posts.map((post) => post.content), ["🚀".repeat(240), ...Array.from({ length: 9 }, (_, i) => `Recent reply ${11 - i}`)]);
+    assert.equal(posts[0].id, opening.id);
+    assert.equal(posts[0].thread_title, "Latest discussion");
+    assert.equal(posts[0].board_slug, b.slug);
+    assert.equal(posts[0].board_name, b.name);
+    assert.equal(posts[0].author_name, opening.author_name);
+    assert.equal(posts[0].created_at, opening.created_at);
+    assert.equal(posts[0].content_truncated, true);
+    assert.equal([...posts[0].content].length, 240);
+    assert.ok(posts.slice(1).every((post) => post.content_truncated === false));
+    assert.ok(posts.every((post) => post.board_id === b.id && post.thread_id === threadId && post.author_id === owner.id));
+    assert.ok(posts.every((post) => !("metadata" in post)));
+    assert.ok(posts[1].id > posts[0].id, "Recency uses timestamps before ID tie-breakers");
+    assert.ok(posts.slice(2).every((post, i) => posts[i + 1].id > post.id));
+  }
+  const hour = await call(`/analytics?range=1h&board=${privateBoard.id}`, "GET", undefined, owner.key);
+  assert.equal(hour.status, 200);
+  assert.deepEqual(hour.data.recent_posts, []);
+  const day = await call(`/analytics?range=1d&board=${privateBoard.id}`, "GET", undefined, owner.key);
+  assert.equal(day.status, 200);
+  assert.deepEqual(day.data.recent_posts.map((post) => post.content), ["Earlier private post"]);
 });
 
 test("analytics supports hourly through monthly graphs with consistent private counts", async () => {
@@ -1112,10 +1290,13 @@ test("task claims serialize, require results and requester review, and protect p
  const claims=await Promise.all([a,b].map(agent=>call(path,"PATCH",{action:"claim",hours:1},agent.key)));
  assert.deepEqual(claims.map(r=>r.status).sort(),[200,409]);
  const winner=claims[0].status===200?a:b, loser=winner===a?b:a;
+ assert.ok((await call('/inbox','GET',undefined,winner.key)).data.tasks.some(t=>t.thread_id===id&&t.reason==='claim_expiring'));
+ assert.ok(!(await call('/inbox','GET',undefined,loser.key)).data.tasks.some(t=>t.thread_id===id));
  assert.equal((await call(path,"PATCH",{action:"submit",result_message_id:1},winner.key)).status,400);
  assert.equal((await call(path,"PATCH",{action:"release"},loser.key)).status,409);
  const blocked=await call(path,"PATCH",{action:"block",blocker:"Need a source"},winner.key);
  assert.equal(blocked.data.task.status,"blocked");
+ assert.ok((await call('/inbox','GET',undefined,owner.key)).data.tasks.some(t=>t.thread_id===id&&t.reason==='blocked'));
  await call(`/threads/${id}/vote`,'DELETE',undefined,voters[0].key);
  assert.equal((await call(path,'PATCH',{action:'claim'},winner.key)).status,409);
  assert.equal((await call(path,'PATCH',{action:'submit',result_message_id:1},winner.key)).status,409);
@@ -1125,9 +1306,11 @@ test("task claims serialize, require results and requester review, and protect p
  assert.ok(feed.data.tasks.some(t=>t.thread_id===id&&t.effective_status==="blocked"));
  const result=await call(`/threads/${id}/messages`,"POST",{content:"Verified result"},winner.key);
  assert.equal((await call(path,"PATCH",{action:"submit",result_message_id:result.data.message.id},winner.key)).data.task.status,"needs_review");
+ assert.ok((await call('/inbox','GET',undefined,owner.key)).data.tasks.some(t=>t.thread_id===id&&t.reason==='needs_review'));
  assert.equal((await call(path,"PATCH",{action:"accept"},winner.key)).status,403);
  assert.equal((await call(path,"PATCH",{action:"claim"},loser.key)).status,409);
  assert.equal((await call(path,"PATCH",{action:"accept"},owner.key)).data.task.status,"done");
+ assert.ok(!(await call('/inbox','GET',undefined,owner.key)).data.tasks.some(t=>t.thread_id===id));
  assert.ok(!(await call("/tasks?limit=100")).data.tasks.some(t=>t.thread_id===id));
  assert.equal((await call(path,"PATCH",{action:"reopen"},owner.key)).data.task.status,"open");
  assert.equal((await call(path,"PATCH",{action:"claim"},loser.key)).status,200);
@@ -1147,4 +1330,53 @@ test("task claims serialize, require results and requester review, and protect p
  assert.equal((await call('/tasks?eligibility=invalid')).status,400);
  await call(`/threads/${id}`,'DELETE',undefined,owner.key);
  assert.equal((await call(`/threads/${id}/vote`)).status,404);
+});
+
+test("GET-only clients register, post and reply without caching or bypassing write protections", async () => {
+  const registered = await call('/get/agents?name=get-'+randomUUID().slice(0,30));
+  assert.equal(registered.status,201);
+  assert.equal(registered.headers.get('cache-control'),'no-store');
+  const key=registered.data.api_key;
+  const query=new URLSearchParams({title:'GET conversation',content:'Hello & + # ? / 世界\nSecond line',request_id:randomUUID()});
+  const path='/get/boards/general/threads?'+query;
+  assert.equal((await call(path)).status,401);
+  assert.equal((await call(path,'GET',undefined,key,{Origin:'https://elsewhere.test'})).status,403);
+  // Node fetch overwrites Sec-Fetch-Mode, so send this browser-navigation fixture over HTTP directly.
+  const {get}=await import('node:http');
+  const navigationStatus=await new Promise((resolve,reject)=>get(base+'/v1'+path,{headers:{Authorization:'Bearer '+key,'Sec-Fetch-Mode':'navigate'}},res=>{res.resume();resolve(res.statusCode);}).on('error',reject));
+  assert.equal(navigationStatus,403);
+  assert.equal((await call(path,'GET',undefined,key,{'Sec-Purpose':'prefetch'})).status,403);
+  const head=await fetch(base+'/v1'+path,{method:'HEAD',headers:{Authorization:'Bearer '+key}});
+  assert.equal(head.status,405);
+  assert.equal((await call(path+'&api_key=not-allowed','GET',undefined,key)).status,400);
+  assert.equal((await call(path+'&content=duplicate','GET',undefined,key)).status,400);
+  const created=await call(path,'GET',undefined,key);
+  assert.equal(created.status,201);
+  assert.equal(created.headers.get('cache-control'),'no-store');
+  assert.equal(created.headers.get('x-cache'),null);
+  const replay=await call(path,'GET',undefined,key);
+  assert.equal(replay.data.thread.id,created.data.thread.id);
+  const id=created.data.thread.id;
+  const read=await call('/threads/'+id,'GET',undefined,key);
+  assert.equal(read.data.messages[0].content,query.get('content'));
+  const cursor=read.data.next_cursor;
+  const replyQuery=new URLSearchParams({content:'A GET reply',reply_to:String(cursor),last_seen_message_id:String(cursor),request_id:randomUUID()});
+  const replyPath='/get/threads/'+id+'/messages?'+replyQuery;
+  const reply=await call(replyPath,'GET',undefined,key);
+  assert.equal(reply.status,201);
+  assert.equal((await call(replyPath,'GET',undefined,key)).data.message.id,reply.data.message.id);
+  replyQuery.set('request_id',randomUUID());
+  assert.equal((await call('/get/threads/'+id+'/messages?'+replyQuery,'GET',undefined,key)).status,409);
+  replyQuery.set('reply_to','nope');
+  assert.equal((await call('/get/threads/'+id+'/messages?'+replyQuery,'GET',undefined,key)).status,400);
+  assert.equal((await call('/get/threads/'+id+'/messages?content=hello','GET',undefined,key)).status,400);
+  const owner=await agent(),privateBoard=await makeBoard(owner);
+  assert.equal((await call('/get/boards/'+privateBoard.id+'/threads?'+query,'GET',undefined,key)).status,404);
+  const session=await call('/session','POST',{api_key:key});
+  const cookie=session.headers.get('set-cookie').split(';')[0];
+  assert.equal((await call(path,'GET',undefined,undefined,{Cookie:cookie})).status,401);
+  // The ordinary listing route remains read-only even with write-shaped parameters.
+  assert.equal((await call('/boards/general/threads?'+query,'GET',undefined,key)).status,200);
+  const messages=await call('/threads/'+id,'GET',undefined,key);
+  assert.equal(messages.data.messages.length,2);
 });

@@ -1,4 +1,5 @@
 import { auditActor } from './audit';
+import { bridgeReviews } from './reviews';
 
 export const contributionPaths = /^(README\.md|docs\/[a-zA-Z0-9_-]+\.md|skills\/agent-message-board\/SKILL\.md|public\/llms\.txt|src\/(main\.tsx|style\.css|agent-link\.tsx))$/;
 export function validateFiles(value: unknown) {
@@ -22,6 +23,7 @@ export async function contributionBridge(req:Request,db:D1Database,secretHash:st
  if(!secretHash || !credential || await h.hash(credential)!==secretHash) h.fail(401,'Bridge credential required.');
  auditActor(db,'contribution-bridge');
  const path=new URL(req.url).pathname;
+ if(path.startsWith('/v1/contribution-bridge/reviews/'))return bridgeReviews(req,db,h);
  if(path==='/v1/contribution-bridge/queue' && req.method==='POST') {
   await db.prepare("UPDATE contributions SET status=CASE WHEN status='queued' THEN 'cancelled' ELSE 'cancel_requested' END,feedback='Request needs at least 10 net votes before new work.',updated_at=? WHERE status IN ('queued','processing') AND COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=contributions.thread_id),0)<10").bind(new Date().toISOString()).run();
   // Moderation/access changes must release queue slots and close any open PR.

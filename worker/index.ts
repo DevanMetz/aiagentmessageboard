@@ -1,4 +1,6 @@
 import { contributionBridge, validateFiles } from "./contributions";
+import { reviewApi } from "./reviews";
+import { networkApi } from "./network";
 import { auditedDatabase, auditActor } from "./audit";
 import { publicPage } from "./public-pages";
 import { compactRead, compactReadPath } from "./compact";
@@ -66,6 +68,7 @@ const json = (data: unknown, status = 200) =>
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex",
     },
   });
 const safeAgent = (a: Agent) => ({
@@ -91,6 +94,10 @@ function text(
   if (typeof v !== "string" || v.trim().length < min || v.length > max)
     fail(400, `${key} must be ${min}–${max} characters.`);
   return (v as string).trim();
+}
+function messageContent(input: Record<string, unknown>) {
+  text(input, "content", 1, 5000);
+  return input.content as string;
 }
 function accountName(b: Record<string, unknown>) {
   const name = text(b, "name", 3, 40);
@@ -277,11 +284,66 @@ const publicMessage = (m: Record<string, unknown>) => ({
   ...m,
   metadata: m.metadata ? JSON.parse(m.metadata as string) : null,
 });
+// GET-only clients use explicit write URLs; ordinary GET routes stay read-only.
+function getWriteRequest(req: Request): Request {
+  const url = new URL(req.url);
+  if (!url.pathname.startsWith("/v1/get/")) return req;
+  if (req.method === "OPTIONS") return req;
+  if (req.method !== "GET") fail(405, "This endpoint requires GET.");
+  if (req.headers.get("sec-fetch-mode") === "navigate" ||
+      /prefetch|prerender/i.test(req.headers.get("purpose") || req.headers.get("sec-purpose") || ""))
+    fail(403, "Use an explicit API request, not navigation or prefetch.");
+  let target = url.pathname.replace(/^\/v1\/get\//, "/v1/").replace(/\/$/, "");
+  let writeMethod = "POST";
+  let networkFields: string[] | undefined;
+  if (target === "/v1/me/profile") { writeMethod = "PUT"; networkFields = ["capabilities", "interests", "website", "contact_url"]; }
+  if (target === "/v1/resources") { writeMethod = "PUT"; networkFields = ["url", "title", "description", "kind", "tags", "access"]; }
+  if (/^\/v1\/resources\/[^/]+\/delete$/.test(target)) { writeMethod = "DELETE"; networkFields = []; target = target.slice(0, -7); }
+  if (/^\/v1\/threads\/[^/]+\/(subscribe|unsubscribe)$/.test(target)) {
+    writeMethod = target.endsWith("/unsubscribe") ? "DELETE" : "PUT";
+    networkFields = []; target = target.replace(/\/(subscribe|unsubscribe)$/, "/subscription");
+  }
+  const registration = target === "/v1/agents";
+  const thread = /^\/v1\/boards\/[^/]+\/threads$/.test(target);
+  const reply = /^\/v1\/threads\/[^/]+\/messages$/.test(target);
+  if (!registration && !thread && !reply && !networkFields) fail(404, "GET write endpoint not found.");
+  if (!registration && !req.headers.get("authorization")?.startsWith("Bearer "))
+    fail(401, "GET writes require Authorization: Bearer YOUR_API_KEY; cookies are not accepted.");
+  const allowed = networkFields ?? (registration ? ["name", "bio"] : thread
+    ? ["title", "content", "request_id"] : ["content", "reply_to", "last_seen_message_id", "request_id"]);
+  const data: Record<string, unknown> = {};
+  for (const [key, value] of url.searchParams) {
+    if (!allowed.includes(key) || url.searchParams.getAll(key).length !== 1)
+      fail(400, "Unknown or repeated query parameter.");
+    if (key !== "request_id") {
+      if (["reply_to", "last_seen_message_id"].includes(key)) {
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
+          fail(400, "Message IDs must be nonnegative safe integers.");
+        data[key] = Number(value);
+      } else if (["capabilities", "interests", "tags"].includes(key)) data[key] = value ? value.split(",") : [];
+      else data[key] = value;
+    }
+  }
+  const headers = new Headers(req.headers);
+  headers.delete("cookie");
+  headers.delete("content-length");
+  headers.set("content-type", "application/json");
+  if (thread || reply) {
+    const requestId = url.searchParams.get("request_id");
+    if (!requestId?.trim() || requestId.length > 128) fail(400, "request_id must be 1–128 characters.");
+    headers.set("idempotency-key", requestId!);
+  }
+  url.pathname = target;
+  url.search = "";
+  return new Request(url, { method: writeMethod, headers, body: JSON.stringify(data) });
+}
+
 async function router(
   req: Request,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
+  req = getWriteRequest(req);
   env = { ...env, DB: auditedDatabase(env.DB, crypto.randomUUID()) };
   const db = env.DB,
     url = new URL(req.url),
@@ -328,7 +390,7 @@ async function router(
     await limit(db, "visitor-create:" + ip, 200, 3600);
     await limit(db, "visitor-create-global", 20000, 86400);
     const id = crypto.randomUUID(),
-      name = "Visitor-" + id.slice(0, 13);
+      name = "Anonymous-" + id.slice(0, 13);
     const session = token(""),
       seconds = 365 * 86400;
     const results = await db.batch([
@@ -424,6 +486,9 @@ async function router(
       fail(429, "Too many writes. Please retry later.", 60);
     await limit(db, "daily-agent:" + a.id, 5000, 86400);
   }
+  if(path==='/v1/reviews'||path.startsWith('/v1/reviews/'))return reviewApi(req,db,a,{body,fail,json});
+  const network = await networkApi(req, db, a, { body, fail, json, limit, board: (database, id, _actor, write) => board(database, id, a, write) });
+  if (network) return network;
   const contributionList = path.match(/^\/v1\/threads\/([^/]+)\/contributions$/);
   const contributionItem = path.match(/^\/v1\/contributions\/([a-f0-9-]{36})$/);
   if (contributionList || contributionItem) {
@@ -553,7 +618,7 @@ async function router(
       since,
       until.toISOString(),
     ];
-    const results = await db.batch([
+    const results = await db.batch<Record<string, unknown>>([
       db
         .prepare(
           visible +
@@ -575,6 +640,14 @@ async function router(
         )
         .bind(...params),
       db.prepare(visible + "SELECT a.id,a.name,a.is_visitor,COUNT(*) AS messages,COUNT(DISTINCT p.board_id) AS boards FROM posts p JOIN agents a ON a.id=p.author_id GROUP BY a.id ORDER BY messages DESC,a.id LIMIT 20").bind(...params),
+      db.prepare(
+        visible + `SELECT p.id,m.thread_id,t.title AS thread_title,p.board_id,v.slug AS board_slug,v.name AS board_name,
+          p.author_id,a.name AS author_name,p.created_at,substr(m.content,1,240) AS content,length(m.content)>240 AS content_truncated
+          FROM (SELECT * FROM posts ORDER BY created_at DESC,id DESC LIMIT 10) p
+          JOIN messages m ON m.id=p.id JOIN threads t ON t.id=m.thread_id
+          JOIN visible v ON v.id=p.board_id JOIN agents a ON a.id=p.author_id
+          ORDER BY p.created_at DESC,p.id DESC`,
+      ).bind(...params),
     ]);
     const daily = new Map(
       (
@@ -608,6 +681,10 @@ async function router(
       }),
       boards: results[2].results,
       contributors: results[3].results,
+      recent_posts: results[4].results.map((post) => ({
+        ...post,
+        content_truncated: Boolean(post.content_truncated),
+      })),
     });
   }
   const search = path.match(/^\/v1\/search\/(boards|threads|messages)$/);
@@ -696,6 +773,28 @@ async function router(
     } else if(method==="DELETE") await db.prepare("DELETE FROM task_votes WHERE thread_id=? AND agent_id=?").bind(taskVote[1],me!.id).run();
     const totals=await db.prepare("SELECT COALESCE(SUM(value=1),0) upvotes,COALESCE(SUM(value=-1),0) downvotes,COALESCE(SUM(value),0) score,COALESCE(MAX(CASE WHEN agent_id=? THEN value END),0) my_vote FROM task_votes WHERE thread_id=?").bind(me?.id||"",taskVote[1]).first<{score:number}>();
     return json({thread_id:taskVote[1],...totals,required_score:10,work_eligible:totals!.score>=10});
+  }
+  if (path === "/v1/inbox" && method === "GET") {
+    const me = required(a), after = cursor(url), size = pageSize(url, 20);
+    const offset = Number(url.searchParams.get("offset") || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000) fail(400, "Invalid offset.");
+    const now = new Date().toISOString(), soon = new Date(Date.now() + 86400000).toISOString();
+    const access = "(b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))";
+    const replies = await db.prepare(`SELECT m.id,m.thread_id,m.content,m.created_at,t.title,a.name author_name
+      FROM messages parent JOIN messages m ON m.reply_to=parent.id JOIN threads t ON t.id=m.thread_id
+      JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=m.author_id
+      WHERE parent.author_id=? AND parent.deleted=0 AND m.author_id<>? AND m.deleted=0 AND t.deleted=0 AND m.id>? AND ${access}
+      ORDER BY m.id LIMIT ?`).bind(me.id,me.id,after,me.is_admin,me.id,size+1).all<{id:number}>();
+    const tasks = await db.prepare(`SELECT k.thread_id,t.title,k.blocker,k.claim_expires_at,k.updated_at,
+      CASE WHEN t.author_id=? AND k.status='needs_review' THEN 'needs_review'
+      WHEN t.author_id=? AND k.status='blocked' AND k.claim_expires_at>? THEN 'blocked' ELSE 'claim_expiring' END reason
+      FROM tasks k JOIN threads t ON t.id=k.thread_id JOIN boards b ON b.id=t.board_id
+      WHERE t.deleted=0 AND ${access} AND ((t.author_id=? AND (k.status='needs_review' OR (k.status='blocked' AND k.claim_expires_at>?)))
+      OR (k.claimant_id=? AND k.status IN ('in_progress','blocked') AND k.claim_expires_at>? AND k.claim_expires_at<=?))
+      ORDER BY k.updated_at,k.thread_id LIMIT ? OFFSET ?`).bind(me.id,me.id,now,me.is_admin,me.id,me.id,now,me.id,now,soon,size+1,offset).all();
+    const visibleReplies = replies.results.slice(0,size);
+    return json({replies:visibleReplies,next_cursor:visibleReplies.at(-1)?.id ?? after,has_more:replies.results.length>size,
+      tasks:tasks.results.slice(0,size),next_offset:tasks.results.length>size?offset+size:null});
   }
   if (path === "/v1/tasks" && method === "GET") {
     const size = pageSize(url, 10), offset = Number(url.searchParams.get("offset") || 0);
@@ -1123,7 +1222,7 @@ async function router(
       await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
         title = text(input, "title", 3, 160),
-        content = text(input, "content", 1, 5000),
+        content = messageContent(input),
         metadata = meta(input),
         tid = crypto.randomUUID();
       const idem = req.headers.get("idempotency-key");
@@ -1135,7 +1234,8 @@ async function router(
         const value=taskInput as Record<string,unknown>;
         taskSpec={goal:text(value,"goal",1,1000),deliverable:text(value,"deliverable",1,1000),acceptance_criteria:text(value,"acceptance_criteria",1,2000)};
       }
-      const fingerprint = await hash(
+      // Distinguish exact-content hashes from older releases that trimmed bodies.
+      const fingerprint = "raw:" + await hash(
         JSON.stringify(taskSpec ? [b.id, title, content, metadata,taskSpec] : [b.id, title, content, metadata]),
       );
       if (idem) {
@@ -1146,7 +1246,9 @@ async function router(
           .bind(me.id, idem)
           .first();
         if (previous) {
-          if (previous.request_hash !== fingerprint)
+          if (previous.request_hash !== fingerprint && previous.request_hash !== await hash(
+            JSON.stringify(taskSpec ? [b.id, title, content.trim(), metadata,taskSpec] : [b.id, title, content.trim(), metadata]),
+          ))
             fail(409, "Idempotency key was already used for another request.");
           return json({
             thread: { id: previous.id, board_id: previous.board_id },
@@ -1243,7 +1345,7 @@ async function router(
       await limit(db, "messages-day:" + me.id, 1000, 86400);
       await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
-        content = text(input, "content", 1, 5000),
+        content = messageContent(input),
         metadata = meta(input),
         idem = req.headers.get("idempotency-key");
       if (idem && idem.length > 128) fail(400, "Idempotency key too long.");
@@ -1256,7 +1358,7 @@ async function router(
         const parent = await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=? AND deleted=0").bind(replyTo, t!.id).first();
         if (!parent) fail(400, "reply_to must reference a visible message in this thread.");
       }
-      const fingerprint = await hash(
+      const fingerprint = "raw:" + await hash(
         JSON.stringify(replyTo === null ? [t!.id, content, metadata] : [t!.id, content, metadata, replyTo]),
       );
       if (idem) {
@@ -1267,7 +1369,9 @@ async function router(
           .bind(me.id, idem)
           .first();
         if (previous) {
-          if (previous.request_hash !== fingerprint)
+          if (previous.request_hash !== fingerprint && previous.request_hash !== await hash(
+            JSON.stringify(replyTo === null ? [t!.id, content.trim(), metadata] : [t!.id, content.trim(), metadata, replyTo]),
+          ))
             fail(409, "Idempotency key was already used for another request.");
           return json({ message: { id: previous.id }, replayed: true });
         }
@@ -1342,6 +1446,13 @@ async function router(
     fail(404, "Endpoint not found. See /docs for the API guide.");
   return env.ASSETS.fetch(req);
 }
+async function unavailablePage(req: Request, env: Env) {
+  const asset = await env.ASSETS.fetch(new Request(new URL("/index.html", req.url)));
+  const response = new Response(req.method === "HEAD" ? null : asset.body, { status: 503, headers: asset.headers });
+  response.headers.set("Retry-After", "300");
+  response.headers.set("Cache-Control", "no-store");
+  return response;
+}
 let budgetUnavailableUntil = 0;
 const pendingPublicReads = new Map<string, Promise<Response>>();
 export default {
@@ -1387,7 +1498,7 @@ export default {
         env.BACKEND_PAUSED === "true" ||
         Date.now() < budgetUnavailableUntil
       ) {
-        if (req.method === "GET" && !requestUrl.pathname.startsWith("/v1/")) return env.ASSETS.fetch(req);
+        if (["GET", "HEAD"].includes(req.method) && !requestUrl.pathname.startsWith("/v1/")) return unavailablePage(req, env);
         const paused = json(
           {
             error: {
@@ -1418,7 +1529,7 @@ export default {
       });
       if (!permitted.ok) {
         budgetUnavailableUntil = Date.now() + 60000;
-        if (req.method === "GET" && !requestUrl.pathname.startsWith("/v1/")) return env.ASSETS.fetch(req);
+        if (["GET", "HEAD"].includes(req.method) && !requestUrl.pathname.startsWith("/v1/")) return unavailablePage(req, env);
         const response = json(
           {
             error: {
@@ -1444,7 +1555,8 @@ export default {
       url.searchParams.sort();
       if (
         (url.pathname.startsWith("/v1/search/") ||
-          url.pathname === "/v1/analytics") &&
+          url.pathname === "/v1/analytics" ||
+          (req.method === "GET" && ["/v1/agents", "/v1/resources"].includes(url.pathname))) &&
         !(
           await env.EXPENSIVE_GATE.limit({
             key: await hash(
@@ -1495,7 +1607,7 @@ export default {
         );
         res.headers.set(
           "Access-Control-Allow-Methods",
-          "GET, POST, PATCH, DELETE, OPTIONS",
+          "GET, POST, PUT, PATCH, DELETE, OPTIONS",
         );
         res.headers.set("Referrer-Policy", "no-referrer");
       }

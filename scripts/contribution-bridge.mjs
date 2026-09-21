@@ -49,6 +49,35 @@ export async function publish(c, github=gh) {
  return github('/pulls','POST',{title:`[Board] ${String(c.thread_title).slice(0,120)}`,head:branch,base:'main',body,draft:true,maintainer_can_modify:false});
 }
 
+const quoteReviewText = value => String(value).replaceAll('@','@\u200b').replaceAll('<','&lt;').split('\n').map(line=>'> '+line).join('\n');
+export async function syncReviews(c,pr,validation='pending',github=gh,boardApi=amb) {
+ if(pr.state!=='open')return;
+ const snapshot={contribution_id:c.id,head_sha:pr.head.sha,validation_status:validation};
+ const {reviews}=await boardApi('/reviews/sync','POST',snapshot);
+ for(const review of reviews) {
+  const current=await github('/pulls/'+pr.number);
+  if(current.state!=='open')return;
+  if(current.head.sha!==review.head_sha){await boardApi('/reviews/sync','POST',{...snapshot,head_sha:current.head.sha,validation_status:'pending'});return;}
+  const marker=`<!-- board-agent-review:${review.id} -->`;
+  let existing;
+  // Recover a published comment after a lost acknowledgement; never duplicate it.
+  for(let page=1;;page++) {
+   const comments=await github(`/issues/${pr.number}/comments?per_page=100&page=${page}`);
+   existing=comments.find(x=>x.user?.login==='github-actions[bot]'&&String(x.body).startsWith(marker));
+   if(existing||comments.length<100)break;
+   if(page>=20)throw Error('Too many PR comments to safely deduplicate an agent review.');
+  }
+  if(!existing) {
+   // Confirm board access and submission currency again before exporting review text.
+   const fresh=await boardApi('/reviews/sync','POST',snapshot);
+   if(!fresh.reviews.some(r=>r.id===review.id))continue;
+   const body=`${marker}\n## Automated board agent review\n\nAgent: ${review.claimant_id}\nReviewed commit: ${review.head_sha}\nVerdict: ${review.verdict}\n\nThis is agent-generated feedback, not a maintainer approval. It applies only to the commit above.\n\n### Summary\n${quoteReviewText(review.summary)}\n\n### Findings\n${review.findings.map(f=>quoteReviewText(`${f.severity}: ${f.path}:${f.line}\n${f.body}`)).join('\n\n')||'No actionable findings reported.'}\n\n### Checks reported by the reviewer\n${quoteReviewText(review.testing)}`;
+   existing=await github('/issues/'+pr.number+'/comments','POST',{body});
+  }
+  await boardApi('/reviews/ack','POST',{id:review.id,github_comment_id:existing.id});
+ }
+}
+
 async function run() {
  const queue=(await amb('/queue','POST',{})).contributions;
  const tests=[];let processed=0;
@@ -64,6 +93,7 @@ async function run() {
    const checks=await gh('/commits/'+found.head.sha+'/status');
    const feedback=`PR ${found.state}; checks ${checks.state}. `+comments.slice(-3).map(x=>`${x.user.login}: ${String(x.body).slice(0,400)}`).join('\n');
    await update(c.id,{status:found.merged?'merged':found.state==='closed'?'closed':'pr_open',pr_number:found.number,feedback});
+   await syncReviews(c,found,checks.statuses.find(s=>s.context==='validate')?.state||'pending');
    if(found.state==='open'&&!checks.statuses.some(s=>s.context==='validate')&&tests.length<1)tests.push({id:c.id,sha:found.head.sha,pr:found.number});
    continue;
   }
@@ -75,6 +105,7 @@ async function run() {
    const payload=await amb('/'+c.id);
    const pr=await publish({...c,...payload});
    await update(c.id,{status:pr.merged?'merged':pr.state==='closed'?'closed':'pr_open',pr_number:pr.number,feedback:'Draft PR created. Isolated validation is pending; operator review is required.'});
+   await syncReviews(c,pr);
    if(pr.state==='open')tests.push({id:c.id,sha:pr.head.sha,pr:pr.number});
   } catch(e) {
    // An uncertain GitHub response may have created a PR: recover it next run.
@@ -95,6 +126,8 @@ if(process.env.BRIDGE_MODE==='report') {
  const url=`https://github.com/${repository}/actions/runs/${process.env.GITHUB_RUN_ID}`;
  await gh('/statuses/'+sha,'POST',{state:passed?'success':'failure',context:'validate',description:passed?'Isolated board contribution checks passed':'Board contribution checks failed',target_url:url});
  await update(id,{status:'pr_open',pr_number:Number(pr),feedback:`Isolated validation ${passed?'passed':'failed'}. ${url} Operator review is still required.`}).catch(()=>{});
+ const current=await gh('/pulls/'+pr);
+ if(current.state==='open'&&current.head.sha===sha)await amb('/reviews/sync','POST',{contribution_id:id,head_sha:sha,validation_status:passed?'success':'failure'});
 } else await run();
 
 }
