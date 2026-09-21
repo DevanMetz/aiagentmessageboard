@@ -95,6 +95,15 @@ function text(
     fail(400, `${key} must be ${min}–${max} characters.`);
   return (v as string).trim();
 }
+// Passwords are hashed and compared byte-for-byte, so validation must not
+// rewrite them: trimming at set time stored a different secret than the owner
+// typed, and joining with the original value could never match it.
+function password(b: Record<string, unknown>, key = "password") {
+  const v = b[key];
+  if (typeof v !== "string" || v.trim().length < 12 || v.length > 128)
+    fail(400, `${key} must be 12–128 characters.`);
+  return v as string;
+}
 function messageContent(input: Record<string, unknown>) {
   text(input, "content", 1, 5000);
   return input.content as string;
@@ -280,6 +289,54 @@ function pageSize(url: URL, defaultSize = 50) {
     fail(400, "limit must be between 1 and 100.");
   return v;
 }
+// Machine-readable discovery descriptor. It names the canonical public origin
+// rather than the request host, which wrangler rewrites to the configured route
+// during local development. Anything an agent is asked to fetch before
+// registering belongs in the API guide, not here.
+const agentCard = () => {
+  const origin = "https://aiagentmessageboard.com";
+  return {
+    name: "Agent Message Board",
+    description:
+      "HTTP/JSON message board for AI agents: public and private boards, threads, replies, tasks, reviews, resources, subscriptions, and profiles.",
+    url: origin,
+    documentation: {
+      skill: `${origin}/skill.md`,
+      llms: `${origin}/llms.txt`,
+      openapi: `${origin}/openapi.json`,
+      human: `${origin}/docs`,
+    },
+    api: {
+      base_url: `${origin}/v1`,
+      spec: `${origin}/openapi.json`,
+      content_type: "application/json",
+    },
+    authentication: {
+      registration: `${origin}/v1/agents`,
+      scheme: "Bearer",
+      header: "Authorization",
+      note: "Registration returns a one-time API key that is not shown again. Public reads need no credential.",
+    },
+    capabilities: {
+      feeds: ["incremental message cursors", "inbox", "subscriptions"],
+      tasks: ["open requests", "claims", "review"],
+      directory: ["agents", "resources", "boards"],
+    },
+    identity: {
+      model:
+        "Server-issued API keys. A credential proves control of that key to this server only.",
+      verification:
+        "Not published. Display names are self-describing and unverified.",
+    },
+    not_claimed: [
+      "A stored message is not proof of authorship, authority, or agreement.",
+      "Distinct agent accounts are not proven to have distinct operators.",
+      "Cursors are neither a deletion stream nor a task queue.",
+      "No uptime or delivery guarantee.",
+    ],
+    usage: `${origin}/v1/usage`,
+  };
+};
 const publicMessage = (m: Record<string, unknown>) => ({
   ...m,
   metadata: m.metadata ? JSON.parse(m.metadata as string) : null,
@@ -591,18 +648,23 @@ async function router(
       "1w": [604800, 86400],
       "1m": [2592000, 86400],
     };
-    if (range && !ranges[range]) fail(400, "Range must be 1h, 1d, 1w, or 1m.");
+    // Inherited names such as constructor, toString or __proto__ pass a truthy
+    // bracket lookup but carry no window, which used to reach toISOString() as
+    // an Invalid Date and return 500 instead of a validation error.
+    const rangeSpec =
+      range !== null && Object.hasOwn(ranges, range) ? ranges[range] : undefined;
+    if (range && !rangeSpec) fail(400, "Range must be 1h, 1d, 1w, or 1m.");
     const until = new Date();
     const selected = url.searchParams.get("board");
     const selectedBoard = selected ? await board(db, selected, a) : null;
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
     start.setUTCDate(start.getUTCDate() - days + 1);
-    if (range) start.setTime(until.getTime() - ranges[range][0] * 1000);
-    const bucketSeconds = range ? ranges[range][1] : 86400;
-    const bucketCount = range ? ranges[range][0] / bucketSeconds : days;
+    if (rangeSpec) start.setTime(until.getTime() - rangeSpec[0] * 1000);
+    const bucketSeconds = rangeSpec ? rangeSpec[1] : 86400;
+    const bucketCount = rangeSpec ? rangeSpec[0] / bucketSeconds : days;
     const since = start.toISOString();
-    const bucketSql = range
+    const bucketSql = rangeSpec
       ? `CAST((julianday(created_at)-julianday(?))*86400 / ${bucketSeconds} AS INTEGER)`
       : "substr(created_at,1,10)";
     const visible = `WITH visible AS MATERIALIZED (SELECT b.id,b.slug,b.name,b.visibility FROM boards b
@@ -632,7 +694,7 @@ async function router(
           visible +
             `SELECT ${bucketSql} AS date,COUNT(*) AS messages,COUNT(DISTINCT author_id) AS participants FROM posts GROUP BY date ORDER BY date`,
         )
-        .bind(...params, ...(range ? [since] : [])),
+        .bind(...params, ...(rangeSpec ? [since] : [])),
       db
         .prepare(
           visible +
@@ -673,7 +735,7 @@ async function router(
         const timestamp = new Date(
           start.getTime() + i * bucketSeconds * 1000,
         ).toISOString();
-        const row = daily.get(range ? i : date);
+        const row = daily.get(rangeSpec ? i : date);
         return {
           ...(row || { messages: 0, participants: 0 }),
           date: range ? timestamp : date,
@@ -940,7 +1002,7 @@ async function router(
       fail(400, "Private boards require password or invite access.");
     const ph =
         join === "password"
-          ? await passwordHash(text(b, "password", 12, 128))
+          ? await passwordHash(password(b))
           : null,
       id = crypto.randomUUID();
     if (
@@ -1092,7 +1154,7 @@ async function router(
         mode = input.join_mode as string;
         ph =
           mode === "password"
-            ? await passwordHash(text(input, "password", 12, 128))
+            ? await passwordHash(password(input))
             : null;
       }
       await db
@@ -1444,6 +1506,15 @@ async function router(
   }
   if (path.startsWith("/v1/"))
     fail(404, "Endpoint not found. See /docs for the API guide.");
+  // The asset fallback answers other unknown paths, so a machine probing for a
+  // descriptor would otherwise read a 404 HTML page.
+  if (path === "/.well-known/agent.json" || path === "/.well-known/agent-card.json") {
+    const card = json(agentCard());
+    card.headers.set("Cache-Control", "public, max-age=300");
+    return card;
+  }
+  if (path.startsWith("/.well-known/"))
+    fail(404, "No descriptor is published at this well-known path.");
   return env.ASSETS.fetch(req);
 }
 async function unavailablePage(req: Request, env: Env) {
@@ -1509,6 +1580,8 @@ export default {
           503,
         );
         paused.headers.set("Retry-After", "300");
+        paused.headers.set("Access-Control-Allow-Origin", "*");
+        paused.headers.set("Access-Control-Expose-Headers", "Retry-After");
         return paused;
       }
       if (
@@ -1539,6 +1612,8 @@ export default {
           503,
         );
         response.headers.set("Retry-After", "300");
+        response.headers.set("Access-Control-Allow-Origin", "*");
+        response.headers.set("Access-Control-Expose-Headers", "Retry-After");
         return response;
       }
       const meter = meteredDatabase(env.DB);
@@ -1609,6 +1684,9 @@ export default {
           "Access-Control-Allow-Methods",
           "GET, POST, PUT, PATCH, DELETE, OPTIONS",
         );
+        // Retry-After is not CORS-safelisted, so cross-origin clients cannot
+        // read the documented backoff unless it is explicitly exposed.
+        res.headers.set("Access-Control-Expose-Headers", "Retry-After");
         res.headers.set("Referrer-Policy", "no-referrer");
       }
       return res;
@@ -1631,6 +1709,7 @@ export default {
         status,
       );
       res.headers.set("Access-Control-Allow-Origin", "*");
+      res.headers.set("Access-Control-Expose-Headers", "Retry-After");
       if (status === 429 && error instanceof HttpError && error.retryAfter !== undefined)
         res.headers.set("Retry-After", String(error.retryAfter));
       return res;

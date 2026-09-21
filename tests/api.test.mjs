@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { localRuntime } from "./support/runtime.mjs";
 
 const base = "http://127.0.0.1:8799",
   persist = ".wrangler/test-" + randomUUID();
@@ -142,6 +143,51 @@ test("public reads work; posting and board creation require authentication", asy
   assert.equal((await call("/boards", "POST", {})).status, 401);
   assert.equal((await call("/me", "GET", undefined, "invalid")).status, 401);
 });
+test("API responses expose Retry-After to cross-origin clients", async () => {
+  const ok = await call("/boards");
+  assert.equal(ok.headers.get("access-control-expose-headers"), "Retry-After");
+  const rejected = await call("/analytics?range=1year");
+  assert.equal(rejected.status, 400);
+  assert.equal(
+    rejected.headers.get("access-control-expose-headers"),
+    "Retry-After",
+  );
+});
+test("a paused backend still reports its retry delay to callers", async () => {
+  const runtime = await localRuntime({
+    port: 8793,
+    vars: { BACKEND_PAUSED: "true" },
+  });
+  try {
+    const res = await fetch(runtime.base + "/v1/boards");
+    assert.equal(res.status, 503);
+    assert.equal(res.headers.get("retry-after"), "300");
+    assert.equal(res.headers.get("access-control-allow-origin"), "*");
+    assert.equal(res.headers.get("access-control-expose-headers"), "Retry-After");
+  } finally {
+    runtime.stop();
+  }
+});
+test("machine clients get a descriptor instead of a 404 page at /.well-known", async () => {
+  const card = await fetch(base + "/.well-known/agent.json");
+  assert.equal(card.status, 200);
+  assert.match(card.headers.get("content-type"), /^application\/json/);
+  const data = await card.json();
+  assert.equal(data.url, "https://aiagentmessageboard.com");
+  assert.equal(data.api.base_url, "https://aiagentmessageboard.com/v1");
+  assert.equal(data.documentation.skill, "https://aiagentmessageboard.com/skill.md");
+  assert.equal(data.authentication.scheme, "Bearer");
+  assert.ok(data.not_claimed.length > 0);
+  const alias = await fetch(base + "/.well-known/agent-card.json");
+  assert.equal(alias.status, 200);
+  assert.equal((await alias.json()).name, data.name);
+  const missing = await fetch(base + "/.well-known/agent.yml");
+  assert.equal(missing.status, 404);
+  assert.match(missing.headers.get("content-type"), /^application\/json/);
+  assert.deepEqual(await missing.json(), {
+    error: { message: "No descriptor is published at this well-known path." },
+  });
+});
 test("registration enforces unique names and does not reveal key hashes", async () => {
   const a = await agent();
   assert.match(a.key, /^amb_[a-f0-9]{64}$/);
@@ -191,6 +237,45 @@ test("private boards are absent from listings, search, direct reads, threads and
   }
   assert.equal(
     (await call(`/boards/${b.id}`, "GET", undefined, owner.key)).status,
+    200,
+  );
+});
+test("a join password is stored and checked byte-for-byte", async () => {
+  const owner = await agent();
+  const secret = "  padded board password  ";
+  const created = await call(
+    "/boards",
+    "POST",
+    {
+      name: "Padded access",
+      slug: "padded-" + randomUUID(),
+      description: "Spacing is part of the secret",
+      visibility: "private",
+      join_mode: "password",
+      password: secret,
+    },
+    owner.key,
+  );
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const board = created.data.board.id;
+  const member = await agent();
+  assert.equal(
+    (await call(`/boards/${board}/join`, "POST", { password: secret }, member.key)).status,
+    200,
+  );
+  const trimmed = await agent();
+  assert.equal(
+    (await call(`/boards/${board}/join`, "POST", { password: secret.trim() }, trimmed.key)).status,
+    403,
+  );
+  const rotated = "  rotated board password  ";
+  assert.equal(
+    (await call(`/boards/${board}`, "PATCH", { join_mode: "password", password: rotated }, owner.key)).status,
+    200,
+  );
+  const later = await agent();
+  assert.equal(
+    (await call(`/boards/${board}/join`, "POST", { password: rotated }, later.key)).status,
     200,
   );
 });
@@ -1100,6 +1185,23 @@ test("analytics supports hourly through monthly graphs with consistent private c
     );
   }
   assert.equal((await call("/analytics?range=1year")).status, 400);
+});
+
+test("analytics rejects inherited property names as ranges", async () => {
+  for (const range of [
+    "constructor",
+    "__proto__",
+    "toString",
+    "hasOwnProperty",
+    "1year",
+  ]) {
+    const r = await call(`/analytics?range=${encodeURIComponent(range)}`);
+    assert.equal(r.status, 400, range);
+    assert.equal(r.data.error.message, "Range must be 1h, 1d, 1w, or 1m.");
+  }
+  const hour = await call("/analytics?range=1h");
+  assert.equal(hour.status, 200);
+  assert.equal(hour.data.bucket_seconds, 300);
 });
 test("compact reads preserve pagination and permissions without changing defaults", async () => {
   const a = await agent();
