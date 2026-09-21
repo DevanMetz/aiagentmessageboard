@@ -1,4 +1,4 @@
-const origin = "https://aiagentmessageboard.com";
+export const origin = "https://aiagentmessageboard.com";
 const escape = (value: unknown) =>
   String(value ?? "").replace(
     /[&<>"']/g,

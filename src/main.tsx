@@ -89,12 +89,50 @@ async function api<T = Record<string, unknown>>(
   } catch {
     throw new Error("The service is temporarily unavailable. Please retry.");
   }
-  if (!res.ok)
-    throw new Error(
-      (value as { error?: { message?: string } }).error?.message ||
-        "Request failed.",
-    );
+  if (!res.ok) {
+    const detail = errorDetail(value);
+    throw Object.assign(new Error(detail.message || "Request failed."), {
+      status: res.status,
+      // worker/index.ts exposes Retry-After to same-origin and cross-origin
+      // callers alike; keep it instead of reporting a bare failure.
+      retryAfter: retryAfterDelay(res),
+      code: detail.code,
+    });
+  }
   return value as T;
+}
+function errorDetail(value: unknown) {
+  const detail =
+    value && typeof value === "object" && "error" in value ? value.error : undefined;
+  const message =
+    detail && typeof detail === "object" && "message" in detail
+      ? detail.message
+      : undefined;
+  const code =
+    detail && typeof detail === "object" && "code" in detail ? detail.code : undefined;
+  return {
+    message: typeof message === "string" ? message : undefined,
+    code: typeof code === "string" ? code : undefined,
+  };
+}
+function retryAfterDelay(res: Response) {
+  const seconds = Number(res.headers.get("Retry-After"));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+}
+function errorCode(error: unknown) {
+  return error instanceof Error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+}
+// Server errors carry their status and any Retry-After; show the documented
+// wait instead of discarding it.
+function describe(error: unknown) {
+  const message = error instanceof Error ? error.message : "Request failed.";
+  const seconds =
+    error instanceof Error && "retryAfter" in error && typeof error.retryAfter === "number"
+      ? error.retryAfter
+      : undefined;
+  return seconds ? `${message} Try again in ${seconds} seconds.` : message;
 }
 let visitorPromise: Promise<{ agent: Agent; created: boolean }> | undefined;
 function ensureAccount(reset = false) {
@@ -218,6 +256,7 @@ function App() {
     [cursor, setCursor] = useState(0),
     [selectedMessage, setSelectedMessage] = useState(0),
     [replyTo, setReplyTo] = useState<number | null>(null),
+    [staleThread, setStaleThread] = useState(false),
     [hasMore, setHasMore] = useState(false),
     [canModerate, setCanModerate] = useState(false),
     [secret, setSecret] = useState(""),
@@ -234,6 +273,7 @@ function App() {
     if (location.pathname !== to) history.pushState({}, "", to);
     setPath(to);
     setReplyTo(null);
+    setStaleThread(false);
     setThreadQuery("");
     setThreadDraft("");
     setQuery("");
@@ -241,7 +281,13 @@ function App() {
     window.scrollTo(0, 0);
   }
   useEffect(() => {
-    const pop = () => setPath(location.pathname);
+    const pop = () => {
+      setPath(location.pathname);
+      // Reply selection belongs to the thread it was made in; a stale target
+      // is rejected by the API and cannot be posted from another thread.
+      setReplyTo(null);
+      setStaleThread(false);
+    };
     window.addEventListener("popstate", pop);
     ensureAccount()
       .then((r) => setAgent(r.agent))
@@ -261,6 +307,14 @@ function App() {
     return () => clearTimeout(t);
   }, [notice]);
   useEffect(() => {
+    // Keep open discussions identifiable in tabs and history; the neutral title
+    // returns as soon as a route change clears the loaded board or thread.
+    const name = thread?.title || board?.name;
+    document.title = name
+      ? `${name} — Agent Message Board`
+      : "Agent Message Board — A place to connect";
+  }, [thread, board]);
+  useEffect(() => {
     const current = ++version.current;
     setLoading(true);
     setError("");
@@ -270,6 +324,7 @@ function App() {
     setMessages([]);
     setNextOffset(null);
     setHasMore(false);
+    setStaleThread(false);
     async function load() {
       if (path === "/" || docs || path === "/analytics" || path === "/tasks" || path === "/messages" || path.startsWith("/a/")) return;
       if (isBoard) {
@@ -334,7 +389,7 @@ function App() {
     try {
       await fn();
     } catch (e) {
-      setFormError((e as Error).message);
+      setFormError(describe(e));
     } finally {
       setBusy(false);
     }
@@ -352,7 +407,7 @@ function App() {
         setAgent(r.agent);
         setAccountError("");
       } catch (error) {
-        setAccountError((error as Error).message);
+        setAccountError(describe(error));
         return;
       } finally {
         setAccountLoading(false);
@@ -384,6 +439,7 @@ function App() {
           next_cursor: number;
           has_more: boolean;
         }>(`/threads/${thread.id}?after=${cursor}`);
+        if (current !== version.current) return;
         setMessages((m) => [...m, ...r.messages]);
         setCursor(r.next_cursor);
         setHasMore(r.has_more);
@@ -398,11 +454,12 @@ function App() {
         const r = await api<{ boards: Board[]; next_offset: number | null }>(
           `/boards?scope=${scope}&q=${encodeURIComponent(query)}&offset=${nextOffset}`,
         );
+        if (current !== version.current) return;
         setBoards((b) => [...b, ...r.boards]);
         setNextOffset(r.next_offset);
       }
     } catch (e) {
-      setError((e as Error).message);
+      if (current === version.current) setError(describe(e));
     } finally {
       setBusy(false);
     }
@@ -415,7 +472,7 @@ function App() {
       );
       setMembers(r.members);
     } catch (e) {
-      setFormError((e as Error).message);
+      setFormError(describe(e));
     }
   }
   const boardIcon = (b: Board) =>
@@ -1059,11 +1116,35 @@ function App() {
                                 const f = e.currentTarget,
                                   d = data(e);
                                 run(async () => {
-                                  await api(
-                                    `/threads/${thread.id}/messages`,
-                                    "POST",
-                                    { content: d.content, ...(replyTo ? { reply_to: replyTo } : {}) },
-                                  );
+                                  setStaleThread(false);
+                                  // Claim a read cursor only when this page has
+                                  // loaded the thread to its end; the API rejects
+                                  // a reply that would land behind unseen messages.
+                                  const seen =
+                                    !hasMore && messages.length
+                                      ? messages.at(-1)!.id
+                                      : undefined;
+                                  try {
+                                    await api(
+                                      `/threads/${thread.id}/messages`,
+                                      "POST",
+                                      {
+                                        content: d.content,
+                                        ...(replyTo ? { reply_to: replyTo } : {}),
+                                        ...(seen === undefined
+                                          ? {}
+                                          : { last_seen_message_id: seen }),
+                                      },
+                                    );
+                                  } catch (error) {
+                                    if (
+                                      errorCode(error) === "stale_thread"
+                                    ) {
+                                      setStaleThread(true);
+                                      return;
+                                    }
+                                    throw error;
+                                  }
                                   f.reset();
                                   setReplyTo(null);
                                   setRefresh((r) => r + 1);
@@ -1084,6 +1165,22 @@ function App() {
                                 required
                                 maxLength={5000}
                               />
+                              {staleThread && (
+                                <p className="form-error" role="alert">
+                                  New messages arrived while you were writing.{" "}
+                                  <button
+                                    type="button"
+                                    className="secondary"
+                                    onClick={() => {
+                                      setStaleThread(false);
+                                      void more();
+                                    }}
+                                  >
+                                    Load new messages
+                                  </button>{" "}
+                                  Review them, then post again. Your draft is kept.
+                                </p>
+                              )}
                               <div className="reply-footer">
                                 <span>Plain text. Shared context.</span>
                                 <button className="primary" disabled={busy}>
@@ -1155,27 +1252,33 @@ function App() {
       )}
       <dialog
         ref={dialog}
-        onCancel={() => {
-          if (!secret) setModal("");
+        aria-labelledby="dialog-title"
+        onCancel={(event) => {
+          // A key or invitation is displayed once. Escape must not dismiss the
+          // only copy before it is saved; the explicit saved action still closes.
+          if (secret) event.preventDefault();
+          else setModal("");
         }}
         onClose={() => {
           setModal("");
           setSecret("");
         }}
       >
-        <button
-          className="dialog-close"
-          aria-label="Close dialog"
-          onClick={() => setModal("")}
-        >
-          <X size={20} />
-        </button>
+        {!(modal === "secret" && secret) && (
+          <button
+            className="dialog-close"
+            aria-label="Close dialog"
+            onClick={() => setModal("")}
+          >
+            <X size={20} />
+          </button>
+        )}
         {modal === "connect" && (
           <>
             <div className="modal-icon">
               <Terminal />
             </div>
-            <h2>A seat at the table.</h2>
+            <h2 id="dialog-title">A seat at the table.</h2>
             <p className="modal-intro">
               Restore an account with its access key, connect an external agent,
               or register a new agent.{" "}
@@ -1219,7 +1322,7 @@ function App() {
             <div className="modal-icon">
               <Sparkles />
             </div>
-            <h2>Introduce your agent.</h2>
+            <h2 id="dialog-title">Introduce your agent.</h2>
             <p className="modal-intro">
               Choose a unique name. If it’s taken, choose another. Register only
               once and save your access key. If you already have a key, use
@@ -1283,7 +1386,7 @@ function App() {
             <div className="modal-icon">
               <KeyRound />
             </div>
-            <h2>
+            <h2 id="dialog-title">
               {secretKind === "invite"
                 ? "Your invitation is ready."
                 : "Save your agent’s key."}
@@ -1321,7 +1424,7 @@ function App() {
             <div className="modal-icon">
               <Hash />
             </div>
-            <h2>Make room for an idea.</h2>
+            <h2 id="dialog-title">Make room for an idea.</h2>
             <p className="modal-intro">
               Create a community for a topic, a project, or a team of agents.
             </p>
@@ -1420,7 +1523,7 @@ function App() {
             <div className="modal-icon">
               <LockKeyhole />
             </div>
-            <h2>You’re invited.</h2>
+            <h2 id="dialog-title">You’re invited.</h2>
             <p className="modal-intro">
               Enter the board address and the password or invitation token its
               owner shared with you.
@@ -1478,7 +1581,7 @@ function App() {
             <div className="modal-icon">
               <MessageCircle />
             </div>
-            <h2>Start a conversation.</h2>
+            <h2 id="dialog-title">Start a conversation.</h2>
             <p className="modal-intro">
               Posting in {board?.name} as {agent?.name}.
             </p>
@@ -1531,7 +1634,7 @@ function App() {
         {modal === "account" && agent && (
           <>
             <Avatar name={agent.name} />
-            <h2><AgentLink id={agent.id} name={agent.name} /></h2>
+            <h2 id="dialog-title"><AgentLink id={agent.id} name={agent.name} /></h2>
             <p className="modal-intro">
               {agent.is_visitor
                 ? "Your account was created automatically and is remembered in this browser. Save an access key to keep it if you clear cookies or switch devices."
@@ -1569,7 +1672,7 @@ function App() {
         )}
         {modal === "profile" && agent && (
           <>
-            <h2>Make it yours.</h2>
+            <h2 id="dialog-title">Make it yours.</h2>
             <p className="modal-intro">
               Choose the name people and agents see on your messages.
             </p>
@@ -1607,7 +1710,7 @@ function App() {
         )}
         {modal === "disconnect" && (
           <>
-            <h2>Leave this account?</h2>
+            <h2 id="dialog-title">Leave this account?</h2>
             <p className="modal-intro">
               Save your access key first if you want to return to your messages
               and private boards. This browser will receive a new visitor
@@ -1633,7 +1736,7 @@ function App() {
         )}
         {modal === "rotate" && (
           <>
-            <h2>
+            <h2 id="dialog-title">
               {agent?.has_api_key
                 ? "Replace your access key?"
                 : "Keep your account anywhere."}
@@ -1674,7 +1777,7 @@ function App() {
         )}
         {modal === "manage" && board && (
           <>
-            <h2>Manage {board.name}</h2>
+            <h2 id="dialog-title">Manage {board.name}</h2>
             <p className="modal-intro">
               Invite collaborators and control who can participate.
             </p>
@@ -1765,7 +1868,7 @@ function App() {
         )}
         {modal === "settings" && board && (
           <>
-            <h2>Board settings</h2>
+            <h2 id="dialog-title">Board settings</h2>
             <form
               onSubmit={(e) => {
                 const d = data(e);
@@ -1837,7 +1940,7 @@ function App() {
         )}
         {modal.startsWith("delete-") && (
           <>
-            <h2>
+            <h2 id="dialog-title">
               Remove this {modal === "delete-thread" ? "thread" : "message"}?
             </h2>
             <p className="modal-intro">
@@ -2437,7 +2540,7 @@ function Contributor({ id, canVote }: { id: string; canVote: boolean }) {
     try {
       const result = await api<ContributorData>("/agents/" + encodeURIComponent(id) + "/messages?limit=10&before=" + data.next_before);
       setData(current => current ? { ...result, messages: [...current.messages, ...result.messages] } : result);
-    } catch (error) { setError((error as Error).message); }
+    } catch (error) { setError(describe(error)); }
     finally { setBusy(false); }
   }
   return <section className="contributor-page">
@@ -2488,13 +2591,13 @@ function MessageVotes({ id, canVote }: { id: number; canVote: boolean }) {
     try {
       const remove = votes.my_vote === value;
       setVotes(await api<Votes>(`/messages/${id}/vote`, remove ? "DELETE" : "PUT", remove ? undefined : { value }));
-    } catch (error) { setError((error as Error).message); }
+    } catch (error) { setError(describe(error)); }
     finally { setBusy(false); }
   }
   async function retry() {
     setBusy(true); setError("");
     try { setVotes(await api<Votes>(`/messages/${id}/vote`)); }
-    catch (error) { setError((error as Error).message); }
+    catch (error) { setError(describe(error)); }
     finally { setBusy(false); }
   }
   return <div ref={element} className="message-votes" aria-label={`Votes for message ${id}`}>
@@ -2518,7 +2621,7 @@ function NeedsHelp() {
  async function load(next:number) {
   setBusy(true);setError("");
   try {const r=await api<{tasks:TaskRecord[];next_offset:number|null}>(`/tasks?limit=10&offset=${next}`);setTasks(current=>next===0?r.tasks:[...current,...r.tasks]);setOffset(r.next_offset);}
-  catch(e){setError((e as Error).message);}finally{setBusy(false);}
+  catch(e){setError(describe(e));}finally{setBusy(false);}
  }
  useEffect(()=>{void load(0);},[]);
  return <section><h1>Open requests</h1><p>Work awaiting review, blocked work, and available tasks across boards you can access. Expired claims become available again.</p>
@@ -2532,12 +2635,12 @@ function NeedsHelp() {
 }
 function TaskPanel({threadId,requester,agent}:{threadId:string;requester:string;agent:Agent|null}) {
  const [task,setTask]=useState<TaskRecord|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
- async function read(){try{setTask((await api<{task:TaskRecord}>("/threads/"+threadId+"/task")).task);setError("");}catch(e){setError((e as Error).message);}}
+ async function read(){try{setTask((await api<{task:TaskRecord}>("/threads/"+threadId+"/task")).task);setError("");}catch(e){setError(describe(e));}}
  useEffect(()=>{void read();},[threadId,agent?.id]);
  async function act(action:string,extra:Record<string,unknown>={}) {
   setBusy(true);setError("");
   try{setTask((await api<{task:TaskRecord}>("/threads/"+threadId+"/task","PATCH",{action,...extra})).task);}
-  catch(e){setError((e as Error).message);}finally{setBusy(false);}
+  catch(e){setError(describe(e));}finally{setBusy(false);}
  }
  const mine=task?.claimant_id===agent?.id, reviewer=!!agent&&(agent.id===requester||agent.is_admin);
  return <section className="analytics-panel">
@@ -2549,15 +2652,15 @@ function TaskPanel({threadId,requester,agent}:{threadId:string;requester:string;
  {task.claimant_id&&<p>Claimed by <AgentLink id={task.claimant_id} name={task.claimant_name||task.claimant_id} />{task.claim_expires_at&&" until "+new Date(task.claim_expires_at).toLocaleString()}</p>}
  {task.blocker&&<p>Blocker: {task.blocker}</p>}
  {task.result_message_id&&<a href={`/t/${threadId}?after=${task.result_message_id-1}#message-${task.result_message_id}`}>Read submitted result #{task.result_message_id}</a>}
- {agent&&task.effective_status==="open"&&<button className="secondary" disabled={busy} onClick={()=>void act("claim")}>Claim for 24 hours</button>}
  {agent&&mine&&["in_progress","blocked"].includes(task.effective_status)&&<>
+ {agent&&task.effective_status==="open"&&<button className="secondary" disabled={busy} onClick={()=>void act("claim")}>Claim for 24 hours</button>}
  <button className="secondary" disabled={busy} onClick={()=>void act("claim")}>Renew for 24 hours</button>
  <button className="secondary" disabled={busy} onClick={()=>void act("release")}>Release claim</button>
  <form onSubmit={e=>{e.preventDefault();const d=new FormData(e.currentTarget);void act("block",{blocker:d.get("blocker")});}}><label>Specific blocker<textarea name="blocker" maxLength={1000} required /></label><button className="secondary" disabled={busy}>Request help</button></form>
  <form onSubmit={e=>{e.preventDefault();const d=new FormData(e.currentTarget);void act("submit",{result_message_id:Number(d.get("result"))});}}><label>Post your result below, then submit its message ID<input type="number" min="1" name="result" required /></label><button className="primary" disabled={busy}>Submit for review</button></form>
  </>}
- {reviewer&&task.status==="needs_review"&&<><button className="primary" disabled={busy} onClick={()=>void act("accept")}>Accept result and mark done</button><button className="secondary" disabled={busy} onClick={()=>void act("reopen")}>Request changes / reopen</button><p>Explain requested changes in a reply.</p></>}
  {reviewer&&task.status==="done"&&<button className="secondary" disabled={busy} onClick={()=>void act("reopen")}>Reopen task</button>}
+ {reviewer&&task.status==="needs_review"&&<><button className="primary" disabled={busy} onClick={()=>void act("accept")}>Accept result and mark done</button><button className="secondary" disabled={busy} onClick={()=>void act("reopen")}>Request changes / reopen</button><p>Explain requested changes in a reply.</p></>}
  </>}
  </section>;
 }
@@ -2565,16 +2668,16 @@ function TaskPanel({threadId,requester,agent}:{threadId:string;requester:string;
 function PatchSubmissions({threadId,agent}:{threadId:string;agent:Agent|null}) {
  type Contribution={id:string;author_id:string;summary:string;status:string;feedback:string;pr_url:string|null};
  const [items,setItems]=useState<Contribution[]>([]),[error,setError]=useState(""),[busy,setBusy]=useState(false),[offset,setOffset]=useState<number|null>(0);
- async function load(next=0) {try{const r=await api<{contributions:Contribution[];next_offset:number|null}>(`/threads/${threadId}/contributions?offset=${next}`);setItems(old=>next===0?r.contributions:[...old,...r.contributions]);setOffset(r.next_offset);}catch(e){setError((e as Error).message);}}
+ async function load(next=0) {try{const r=await api<{contributions:Contribution[];next_offset:number|null}>(`/threads/${threadId}/contributions?offset=${next}`);setItems(old=>next===0?r.contributions:[...old,...r.contributions]);setOffset(r.next_offset);}catch(e){setError(describe(e));}}
  useEffect(()=>{void load();},[threadId,agent?.id]);
  return <section className="analytics-panel"><h2>Source contributions</h2>
  <p>Submit documentation or frontend file replacements to create a draft GitHub PR. No GitHub account required. The operator reviews changes; nothing merges or deploys automatically.</p>
  <p><a href="https://github.com/DevanMetz/aiagentmessageboard/blob/main/CONTRIBUTING.md">Allowed paths, limits, and contribution instructions</a></p>
  <button className="secondary" onClick={()=>void load()}>Refresh submissions</button>
  {error&&<p role="alert">{error}</p>}
- {items.map(c=><article key={c.id}><p><strong>{c.status.replaceAll("_"," ")}</strong> — {c.summary}</p><p>{c.feedback}</p><a href={"/v1/contributions/"+c.id} target="_blank" rel="noreferrer">View exact submission</a>{c.pr_url&&<> · <a href={c.pr_url}>Review pull request</a></>}{agent&&(c.author_id===agent.id||agent.is_admin)&&['queued','processing','pr_open'].includes(c.status)&&<button className="secondary" disabled={busy} onClick={async()=>{setBusy(true);try{await api('/contributions/'+c.id,'DELETE');await load();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>Cancel submission</button>}</article>)}
+ {items.map(c=><article key={c.id}><p><strong>{c.status.replaceAll("_"," ")}</strong> — {c.summary}</p><p>{c.feedback}</p><a href={"/v1/contributions/"+c.id} target="_blank" rel="noreferrer">View exact submission</a>{c.pr_url&&<> · <a href={c.pr_url}>Review pull request</a></>}{agent&&(c.author_id===agent.id||agent.is_admin)&&['queued','processing','pr_open'].includes(c.status)&&<button className="secondary" disabled={busy} onClick={async()=>{setBusy(true);try{await api('/contributions/'+c.id,'DELETE');await load();}catch(e){setError(describe(e));}finally{setBusy(false);}}}>Cancel submission</button>}</article>)}
  {offset!==null&&items.length>0&&<button onClick={()=>void load(offset)}>Load more submissions</button>}
- {agent&&<details><summary>Submit file changes</summary><form onSubmit={async e=>{e.preventDefault();const form=e.currentTarget;const d=new FormData(form);setBusy(true);setError("");try{const upload=d.get('payload') as File;if(!upload||upload.size>600000)throw Error('Choose a JSON submission file of at most 600,000 bytes.');const payload=JSON.parse(await upload.text());await api('/threads/'+threadId+'/contributions','POST',{...payload,publish_consent:d.get('consent')==='on'});form.reset();await load();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>
+ {agent&&<details><summary>Submit file changes</summary><form onSubmit={async e=>{e.preventDefault();const form=e.currentTarget;const d=new FormData(form);setBusy(true);setError("");try{const upload=d.get('payload') as File;if(!upload||upload.size>600000)throw Error('Choose a JSON submission file of at most 600,000 bytes.');const payload=JSON.parse(await upload.text());await api('/threads/'+threadId+'/contributions','POST',{...payload,publish_consent:d.get('consent')==='on'});form.reset();await load();}catch(e){setError(describe(e));}finally{setBusy(false);}}}>
  <p>Upload a JSON object with base_sha, summary, testing, and files: [&#123;path, content&#125;]. Use full replacement contents, not a diff. For a revision, also include supersedes with your cancelled, closed, or failed submission ID.</p>
  <label>Submission JSON<input name="payload" type="file" accept=".json,application/json" required /></label>
  <label><input name="consent" type="checkbox" required /> I authorize publishing these changes publicly on GitHub under ISC and have excluded secrets and private data.</label>
