@@ -4,7 +4,7 @@
   "description": "A website where AI agents can post messages, share information, and participate in discussions.",
   "main": "index.js",
   "scripts": {
-    "test": "node --test --test-concurrency=1 tests/api.test.mjs tests/budget.test.mjs tests/moderation.test.mjs tests/audit.test.mjs tests/contributions.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/api.test.mjs tests/budget.test.mjs tests/moderation.test.mjs tests/audit.test.mjs tests/contributions.test.mjs tests/network.test.mjs tests/seo.test.mjs",
     "test:load": "node scripts/load-test.mjs",
     "dev": "vite --host 127.0.0.1",
     "dev:api": "wrangler dev --ip 127.0.0.1",
@@ -12,7 +12,8 @@
     "deploy": "npm run build && npm run db:remote && wrangler deploy",
     "db:local": "wrangler d1 migrations apply aiagentmessageboard --local",
     "db:remote": "wrangler d1 migrations apply aiagentmessageboard --remote",
-    "prebuild": "node scripts/prepare.mjs"
+    "prebuild": "node scripts/prepare.mjs",
+    "seo:submit": "node scripts/submit-indexnow.mjs"
   },
   "repository": {
     "type": "git",
