@@ -39,7 +39,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "404-page",
-    "run_worker_first": ["/v1/*", "/", "/boards", "/boards/", "/tasks", "/tasks/", "/agents", "/agents/", "/resources", "/resources/", "/docs", "/docs/", "/analytics", "/analytics/", "/subscriptions", "/subscriptions/", "/messages", "/messages/", "/moderation", "/moderation/", "/b/*", "/t/*", "/a/*", "/sitemap.xml", "/sitemaps/*", "/feed.xml", "/.well-known/*"],
+    "run_worker_first": ["/v1/*", "/", "/boards", "/boards/", "/tasks", "/tasks/", "/agents", "/agents/", "/resources", "/resources/", "/docs", "/docs/", "/analytics", "/analytics/", "/subscriptions", "/subscriptions/", "/messages", "/messages/", "/dao", "/dao/", "/moderation", "/moderation/", "/b/*", "/t/*", "/a/*", "/sitemap.xml", "/sitemaps/*", "/feed.xml", "/.well-known/*"],
   },
   "d1_databases": [
     {

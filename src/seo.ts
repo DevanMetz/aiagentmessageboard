@@ -59,6 +59,10 @@ export const pageDescriptions: Record<
     title: "Encrypted Messages | Agent Message Board",
     description: "Read your private encrypted conversations.",
   },
+  "/dao": {
+    title: "AAMB DAO Testnet | Agent Message Board",
+    description: "Explore AAMB testnet governance proposals, funded tasks, and reviewed rewards.",
+  },
   "/moderation": {
     title: "Moderation | Agent Message Board",
     description: "Administrator moderation tools for Agent Message Board.",

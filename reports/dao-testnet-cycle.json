@@ -1,0 +1,78 @@
+{
+  "network": "Robinhood Chain Testnet",
+  "chainId": 46630,
+  "boardBase": "http://127.0.0.1:8818",
+  "boardId": "94b9e999-60af-4d81-8f79-ae37d83266f9",
+  "threadId": "dd48643a-d328-45d7-82d6-ae609f1bc356",
+  "taskId": "0x532a6ba7c1e32b73565b820fd87a89b5715d249ee5e963782de074f0bc3f5d54",
+  "proposalId": "43856485960936186846203590374364091826865489161576951707370148342163662691014",
+  "evidenceHash": "0x2eb78dee3018385c33e7a5630da94bebf68454a58ea5746ec92f69bb26f971cb",
+  "evidenceMessageId": 3,
+  "originNote": "\nDemo hosting correction: this task exists at http://127.0.0.1:8818/t/dd48643a-d328-45d7-82d6-ae609f1bc356. The original immutable proposal used a production-origin URL because the local Worker rewrote its host; no production task was created. The committed specification hash and on-chain terms are unchanged.",
+  "workerAddress": "0x5F181add46F04bd037228Da9613b1178Cc56Dec0",
+  "reviewerAddress": "0x89efbF3d68Df2a7F492d160333CcF78e20432988",
+  "reward": "100.0",
+  "symbol": "AAMB",
+  "workerBalanceBefore": "0",
+  "workerBalanceAfter": "100000000000000000000",
+  "taskStatus": "done",
+  "chainStatus": "Paid",
+  "confirmedBlock": 121035076,
+  "receipts": [
+    {
+      "step": "Delegate",
+      "transactionHash": "0xde57a12b553c12e93ec82ef56f4b3ee29376bd1d523c85bcaf0952eeaf806c0f",
+      "blockNumber": 121030960,
+      "status": 1
+    },
+    {
+      "step": "Propose",
+      "transactionHash": "0x0e3ee2595ac624b6ae3d7fd92e4144eb1b1fe822375ff679ec77fe1149cf48f9",
+      "blockNumber": 121030985,
+      "status": 1
+    },
+    {
+      "step": "Vote",
+      "transactionHash": "0x73ae4f85f3c2d315c6c6590eb1828463c811bf3d37db91a279ebefde1879a304",
+      "blockNumber": 121031171,
+      "status": 1
+    },
+    {
+      "step": "Queue",
+      "transactionHash": "0x3dab113aa5f69994611b31cc7f41212e7336af3145e07ef253c10596132a9d8c",
+      "blockNumber": 121031895,
+      "status": 1
+    },
+    {
+      "step": "Fund task",
+      "transactionHash": "0x54da9169478cd39bd7467cdff779f5bc251bc00ee6d9bf3c78c0faae12c5f103",
+      "blockNumber": 121034814,
+      "status": 1
+    },
+    {
+      "step": "Claim",
+      "transactionHash": "0x70e3965024ace6c6d6358a608d0ddb6999ece3bdf78ee2f7b88e51cbcf797b51",
+      "blockNumber": 121034831,
+      "status": 1
+    },
+    {
+      "step": "Submit work",
+      "transactionHash": "0xf068e6dc7cffba536e468023da43fbd48ba3601f6d646df941fb7a6ee62688f8",
+      "blockNumber": 121034859,
+      "status": 1
+    },
+    {
+      "step": "Approve and pay",
+      "transactionHash": "0x613314617954a20c4f1a57c998a3d56a91e7196da638245d6a3c2982811443dd",
+      "blockNumber": 121034888,
+      "status": 1
+    }
+  ],
+  "completedAt": "2026-09-18T01:44:09.170Z",
+  "database": ".wrangler/isolated-7677a30b-671a-4c04-8316-64f63ba4be66",
+  "note": "Actual Robinhood testnet transactions, with board/API on an isolated local Worker. Demonstration roles have separate keys controlled by this developer; this is not proof of independent participants.",
+  "evidenceContent": "Verified AAMB prototype report.\nChain ID: 46630\nToken: 0xaC19a71e3BAffd9BFdc424472351CDbdF5de1ba5\nGovernor: 0x6f9B9C1CC3606a5538578c3C2CfF6089a0F60D98\nEscrow: 0x579c68F69F05061B2B2623d818aC0a03679CC17B\nProposal: 43856485960936186846203590374364091826865489161576951707370148342163662691014\nFunding transaction: 0x54da9169478cd39bd7467cdff779f5bc251bc00ee6d9bf3c78c0faae12c5f103\nThe funded reward is 100 AAMB. The named reviewer is distinct from the claimant. Contract tests check authorization, replay prevention, and expiry. Testnet tokens have no monetary value.\nDemo hosting correction: this task exists at http://127.0.0.1:8818/t/dd48643a-d328-45d7-82d6-ae609f1bc356. The original immutable proposal used a production-origin URL because the local Worker rewrote its host; no production task was created. The committed specification hash and on-chain terms are unchanged.",
+  "evidenceAuthorId": "6968ee12-fc67-4c53-8805-fdfc4b2a6828",
+  "rewardEventVerified": true,
+  "reverifiedAt": "2026-09-18T01:48:41.116Z"
+}

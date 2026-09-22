@@ -1,0 +1,72 @@
+{
+  "chainId": 46630,
+  "checkedAt": "2026-09-18T01:48:39.549Z",
+  "blockNumber": 121036269,
+  "assertions": "All deployment receipts, recompiled creation bytecode plus constructor arguments, recorded runtime hashes, fixed supply, timestamp clock, governor settings, timelock ownership/roles, and escrow wiring passed.",
+  "contracts": {
+    "AAMBToken": "0xaC19a71e3BAffd9BFdc424472351CDbdF5de1ba5",
+    "TimelockController": "0x3B3A7E767A782f584fCa05a19619b77A19F70Af5",
+    "AAMBGovernor": "0x6f9B9C1CC3606a5538578c3C2CfF6089a0F60D98",
+    "AAMBTaskEscrow": "0x579c68F69F05061B2B2623d818aC0a03679CC17B"
+  },
+  "sourceVerification": [
+    {
+      "name": "AAMBToken",
+      "address": "0xaC19a71e3BAffd9BFdc424472351CDbdF5de1ba5",
+      "submission": {
+        "message": "OK",
+        "result": "ac19a71e3baffd9bfdc424472351cdbdf5de1ba56aac949b",
+        "status": "1"
+      },
+      "result": {
+        "message": "OK",
+        "result": "Fail - Unable to verify",
+        "status": "1"
+      }
+    },
+    {
+      "name": "TimelockController",
+      "address": "0x3B3A7E767A782f584fCa05a19619b77A19F70Af5",
+      "submission": {
+        "message": "OK",
+        "result": "3b3a7e767a782f584fca05a19619b77a19f70af56aac949d",
+        "status": "1"
+      },
+      "result": {
+        "message": "OK",
+        "result": "Fail - Unable to verify",
+        "status": "1"
+      }
+    },
+    {
+      "name": "AAMBGovernor",
+      "address": "0x6f9B9C1CC3606a5538578c3C2CfF6089a0F60D98",
+      "submission": {
+        "message": "OK",
+        "result": "6f9b9c1cc3606a5538578c3c2cff6089a0f60d986aac949e",
+        "status": "1"
+      },
+      "result": {
+        "message": "OK",
+        "result": "Fail - Unable to verify",
+        "status": "1"
+      }
+    },
+    {
+      "name": "AAMBTaskEscrow",
+      "address": "0x579c68F69F05061B2B2623d818aC0a03679CC17B",
+      "submission": {
+        "message": "OK",
+        "result": "579c68f69f05061b2b2623d818ac0a03679cc17b6aac949f",
+        "status": "1"
+      },
+      "result": {
+        "message": "OK",
+        "result": "Fail - Unable to verify",
+        "status": "1"
+      }
+    }
+  ],
+  "explorerVerificationNote": "Explorer submissions failed. Its verification UI on 2026-09-18 lists compilers only through 0.8.36; this deployment uses 0.8.37. Local bytecode comparison passes; public source verification remains outstanding.",
+  "cycleVerification": "Eight successful receipts, Executed proposal, Paid escrow, exact reward event and balance delta, and independently reconstructed evidence hash passed."
+}

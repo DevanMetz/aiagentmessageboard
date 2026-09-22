@@ -1,0 +1,43 @@
+{
+  "checkedAt": "2026-09-18T01:56:12.833Z",
+  "chainId": 4663,
+  "blockNumber": 65848670,
+  "readOnly": true,
+  "contracts": {
+    "factory": {
+      "address": "0x1f7d7550b1b028f7571e69a784071f0205fd2efa",
+      "runtimeCodeHash": "0xec72b1abd1f2faee020cfea9c646bd8994f9fb389054f6e574f103a895091739"
+    },
+    "positionManager": {
+      "address": "0x73991a25c818bf1f1128deaab1492d45638de0d3",
+      "runtimeCodeHash": "0x0a493d1af3d0f25fed8efa205244ebee14114267a08647fc38c515c7cd6ead4f"
+    },
+    "quoteToken": {
+      "address": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "runtimeCodeHash": "0x864cc9ad53b338b82da1f7cab85ab0b3d5c8861acb422b6fec63cf36234f36a6"
+    },
+    "wrappedNative": {
+      "address": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "runtimeCodeHash": "0x5706be52f64875fee65a2cec0d80e47a23d8793cbe85d214b48445e2d05f5353"
+    }
+  },
+  "quoteDecimals": 6,
+  "tickSpacing": 200,
+  "fullRangeTicks": [
+    -887200,
+    887200
+  ],
+  "allocationTotal": "1000000",
+  "readyToDeploy": false,
+  "remaining": [
+    "Distribution eligibility, supply confirmation and recipient list",
+    "Jurisdiction, legal operator and reviewed public terms",
+    "Fresh custody signers",
+    "Reviewed vesting/distribution contracts and final cliff details",
+    "Independent contract review and explorer source verification",
+    "Owner-approved quote-asset and gas budgets",
+    "Final deployment and liquidity transaction simulation",
+    "Explicit mainnet launch authorization"
+  ],
+  "limitations": "Address/code existence and contract relationships checked against the documented deployment. This is not a DEX audit, price quote, liquidity guarantee, or authorization to transact. Recheck at execution time."
+}

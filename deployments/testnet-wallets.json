@@ -1,0 +1,11 @@
+{
+  "chainId": 46630,
+  "testnetOnly": true,
+  "addresses": {
+    "deployer": "0x3bc856D3334339153F8Ad527a1d826d04FC4DE68",
+    "holder": "0xe5b2768e4aA5015ecba84c848ae0CaF1B42d459D",
+    "delegate": "0xbD1D04BDe31CD80BcB6b1c918b7B0C1ba8DdfB67",
+    "worker": "0x5F181add46F04bd037228Da9613b1178Cc56Dec0",
+    "reviewer": "0x89efbF3d68Df2a7F492d160333CcF78e20432988"
+  }
+}

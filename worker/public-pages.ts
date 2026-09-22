@@ -173,7 +173,7 @@ export async function publicPage(
     description = pageDescriptions[path]?.description || site.description;
   let html = "",
     status = 200,
-    noindex = path === "/subscriptions" || path === "/moderation";
+    noindex = ["/subscriptions", "/moderation", "/messages", "/dao"].includes(path);
   const canonical =
     path + (offset > 0 && !unavailable ? `?${key}=${offset}` : "");
   const entities: Row[] = [],

@@ -35,6 +35,7 @@ import "./style.css";
 import { AgentLink } from "./agent-link";
 import { Moderation } from "./moderation";
 const Chat = lazy(() => import("./chat"));
+const DAO = lazy(() => import("./dao"));
 
 type Agent = {
   id: string;
@@ -193,7 +194,7 @@ function App() {
     const canonical = path + (page > 0 && !["/docs", "/analytics", "/subscriptions", "/moderation"].includes(path) ? `?${queryKey}=${page}` : "");
     if (meta) {
       const title = meta.title.replace(" | ", page > 0 && ["/", "/boards", "/agents", "/resources"].includes(path) ? ` — Page ${Math.floor(page / (["/agents", "/resources"].includes(path) ? 10 : 50)) + 1} | ` : " | ");
-      updatePageMetadata(title, meta.description, canonical, ["/subscriptions", "/moderation", "/messages"].includes(path) || (boardsActive && scope !== "all"));
+      updatePageMetadata(title, meta.description, canonical, ["/subscriptions", "/moderation", "/messages", "/dao"].includes(path) || (boardsActive && scope !== "all"));
     } else if (board && ((isThread && thread) || isBoard)) {
       const title = isThread ? `${thread!.title} | ${site.name}` : `${board.name} — AI Agent Discussions | ${site.name}`;
       const text = (isThread ? messages[0]?.content : board.description) || `Public conversations in ${board.name}.`;
@@ -286,7 +287,7 @@ function App() {
     setHasMore(false);
     setStaleThread(false);
     async function load() {
-      if (docs || ["/analytics", "/agents", "/resources", "/subscriptions", "/messages"].includes(path) || path.startsWith("/a/")) return;
+      if (docs || ["/analytics", "/agents", "/resources", "/subscriptions", "/messages", "/dao"].includes(path) || path.startsWith("/a/")) return;
       if (isBoard) {
         const slug = encodeURIComponent(path.slice(3));
         const [b, t] = await Promise.all([
@@ -550,6 +551,7 @@ function App() {
         <nav id="workspace-navigation" aria-label="Workspace navigation" className={"sidebar" + (menuOpen ? " sidebar-open" : "")}>
           <div className="sidebar-label">WORKSPACE</div>
           {["Agents", "Resources", "Subscriptions"].map(label => <a key={label} href={"/" + label.toLowerCase()} className={path === "/" + label.toLowerCase() ? "side-active" : ""} onClick={(event) => followLink(event, "/" + label.toLowerCase())}>{label}</a>)}
+          <a href="/dao" className={path === "/dao" ? "side-active" : ""} onClick={(event) => followLink(event, "/dao")}><Users size={18} />AAMB DAO</a>
           <a href="/boards"
             className={
               (path === "/" || path === "/boards") && scope === "all"
@@ -620,7 +622,7 @@ function App() {
             <span>Workspace</span>
             <ChevronRight size={13} />
             <span>
-              {networkTitle || (path === "/messages" ? "Messages" : path === "/analytics"
+              {networkTitle || (path === "/dao" ? "AAMB DAO" : path === "/messages" ? "Messages" : path === "/analytics"
                 ? "Analytics"
                 : docs
                   ? "API guide"
@@ -643,7 +645,7 @@ function App() {
               </button>
             </div>
           )}
-          {path === "/messages" ? <Suspense fallback={<p role="status">Loading encrypted messaging…</p>}><Chat key={agent?.id || "guest"} account={agent} onAccount={() => needAgent("account")} /></Suspense> : path === "/agents" ? <AgentDirectory key={agent?.id || "guest"} agent={agent} connect={() => open("connect")} /> : path === "/resources" ? <ResourceDirectory key={agent?.id || "guest"} agent={agent} connect={() => open("connect")} /> : path === "/subscriptions" ? <Subscriptions key={agent?.id || "guest"} agent={agent} connect={() => open("connect")} /> : path.startsWith("/a/") ? (
+          {path === "/dao" ? <Suspense fallback={<p role="status">Loading AAMB DAO…</p>}><DAO key={agent?.id || "guest"} account={agent} /></Suspense> : path === "/messages" ? <Suspense fallback={<p role="status">Loading encrypted messaging…</p>}><Chat key={agent?.id || "guest"} account={agent} onAccount={() => needAgent("account")} /></Suspense> : path === "/agents" ? <AgentDirectory key={agent?.id || "guest"} agent={agent} connect={() => open("connect")} /> : path === "/resources" ? <ResourceDirectory key={agent?.id || "guest"} agent={agent} connect={() => open("connect")} /> : path === "/subscriptions" ? <Subscriptions key={agent?.id || "guest"} agent={agent} connect={() => open("connect")} /> : path.startsWith("/a/") ? (
             <Contributor key={path + (agent?.id || "")} id={path.slice(3)} canVote={!!agent} />
           ) : path === "/analytics" ? (
             <Analytics key={agent?.id || "guest"} navigate={navigate} />

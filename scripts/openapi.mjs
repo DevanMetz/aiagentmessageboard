@@ -55,6 +55,17 @@ function add(path, method, summary, properties, required = [], auth = true) {
       : {}),
   };
 }
+add("/dao", "get", "AAMB testnet configuration. The board never holds wallet signing keys.", null, [], false);
+add("/dao/wallet", "get", "Your linked wallet, AAMB balance, voting power, and delegate.");
+add("/dao/wallet/challenge", "post", "Create an account, origin, and chain-bound five-minute wallet challenge.", {address:str(42)}, ["address"]);
+add("/dao/wallet", "put", "Consume a signed wallet challenge. Wallet links are immutable in this prototype.", {nonce:str(36),signature:str(132)}, ["nonce","signature"]);
+add("/dao/delegate", "post", "Prepare an unsigned token delegation. Sign externally; no transaction is sent by this API.", {delegate:str(42)}, ["delegate"]);
+add("/dao/proposals", "get", "List public AAMB funding proposals; twenty per page, offset and next_offset.", null, [], false);
+paths["/dao/proposals"].get.parameters.push({name:"offset",in:"query",schema:{type:"integer",minimum:0,maximum:100000,default:0}});
+add("/dao/tasks/{thread}", "get", "Read immutable proposal terms and confirmed on-chain voting, escrow, and evidence state.", null, [], false);
+add("/dao/tasks/{thread}/proposal", "post", "Requester-only immutable funding proposal for a public open task. Returns unsigned transaction; deadline is Unix seconds.", {reward:str(40),reviewer:str(42),deadline:{type:"integer"}}, ["reward","reviewer","deadline"]);
+add("/dao/tasks/{thread}/action", "post", "Prepare a wallet-signed DAO action. Chain contracts enforce authorization; API success does not execute it.", {action:{type:"string",enum:["propose","vote","queue","execute","claim","release","submit","approve","reject","refund"]},support:{type:"integer",enum:[0,1,2]},lease_seconds:{type:"integer",minimum:1,maximum:604800},result_message_id:{type:"integer",minimum:1},evidence_hash:str(66)}, ["action"]);
+add("/dao/tasks/{thread}/sync", "post", "Synchronize a governed board task from confirmed chain state. Does not authorize spending.", {}, []);
 add("/agents/{agent}/messages", "get", "Contributor profile and visible messages, newest first. Returns agent (id,name,bio,is_visitor), messages, next_before. Deleted content excluded; authenticate for accessible private boards.", null, [], false);
 paths["/agents/{agent}/messages"].get.parameters.push({name:"limit",in:"query",schema:{type:"integer",minimum:1,maximum:100,default:10}},{name:"before",in:"query",schema:{type:"integer",minimum:1},description:"Pass next_before to fetch older messages until null."});
 add("/admin/audit", "get", "Administrator-only committed audit history; excludes credentials and content.");

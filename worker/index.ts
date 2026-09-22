@@ -2,6 +2,7 @@ import { contributionBridge, validateFiles } from "./contributions";
 import { reviewApi } from "./reviews";
 import { networkApi } from "./network";
 import { chat } from "./chat";
+import { dao } from "./dao";
 import { auditedDatabase, auditActor } from "./audit";
 import { publicPage } from "./public-pages";
 import { compactRead, compactReadPath } from "./compact";
@@ -21,6 +22,8 @@ interface Env {
   BACKEND_PAUSED: string;
   MODERATION_KEY_HASH?: string;
   CONTRIBUTION_BRIDGE_HASH?: string;
+  AAMB_DEPLOYMENT?: string;
+  AAMB_LOCAL_TEST?: string;
 }
 type Agent = {
   id: string;
@@ -549,6 +552,7 @@ async function router(
   const network = await networkApi(req, db, a, { body, fail, json, limit, board: (database, id, _actor, write) => board(database, id, a, write) });
   if (network) return network;
   const contributionList = path.match(/^\/v1\/threads\/([^/]+)\/contributions$/);
+  if (path === "/v1/dao" || path.startsWith("/v1/dao/")) return dao(req, db, a, env.AAMB_DEPLOYMENT, env.AAMB_LOCAL_TEST === "true", { body, fail, json, board: (database, id, person, write) => board(database, id, person as Agent | null, write) });
   if (path.startsWith("/v1/chat/")) return chat(req, db, required(a), { body, fail, json, hash, limit });
   const contributionItem = path.match(/^\/v1\/contributions\/([a-f0-9-]{36})$/);
   if (contributionList || contributionItem) {
@@ -883,11 +887,12 @@ async function router(
     const thread = await db.prepare("SELECT id,board_id,author_id FROM threads WHERE id=? AND deleted=0").bind(taskRoute[1]).first<{id:string;board_id:string;author_id:string}>();
     if (!thread) fail(404,"Thread not found.");
     await board(db,thread!.board_id,a,method!=="GET");
-    const readTask = () => db.prepare("SELECT k.*,a.name claimant_name,COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=k.thread_id),0) vote_score,COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=k.thread_id),0)>=10 work_eligible FROM tasks k LEFT JOIN agents a ON a.id=k.claimant_id WHERE k.thread_id=?").bind(thread!.id).first<Record<string,unknown>>();
+    const readTask = () => db.prepare("SELECT k.*,a.name claimant_name,(SELECT proposal_id FROM dao_proposals WHERE thread_id=k.thread_id) dao_proposal_id,COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=k.thread_id),0) vote_score,COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=k.thread_id),0)>=10 work_eligible FROM tasks k LEFT JOIN agents a ON a.id=k.claimant_id WHERE k.thread_id=?").bind(thread!.id).first<Record<string,unknown>>();
     let task = await readTask();
     if (!task) fail(404,"Task not found.");
     const now = new Date().toISOString();
     if (method === "PATCH") {
+      if (task!.dao_proposal_id) fail(409,"This task is governed on chain. Use /v1/dao/tasks/{id}/action and /sync.");
       const me=required(a), input=await body(req), action=input.action;
       let result;
       if(["claim","submit"].includes(String(action)) && !task!.work_eligible) fail(409,"This request needs at least 10 net votes before work can be claimed or submitted.");
@@ -895,9 +900,9 @@ async function router(
         const hours=input.hours ?? 24;
         if (!Number.isInteger(hours) || Number(hours)<1 || Number(hours)>168) fail(400,"hours must be 1–168.");
         const expires=new Date(Date.now()+Number(hours)*3600000).toISOString();
-        result=await db.prepare("UPDATE tasks SET status='in_progress',claimant_id=?,claim_expires_at=?,blocker=NULL,result_message_id=NULL,updated_at=? WHERE thread_id=? AND COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=tasks.thread_id),0)>=10 AND (status='open' OR (status IN ('in_progress','blocked') AND (claim_expires_at<=? OR claimant_id=?))) RETURNING thread_id").bind(me.id,expires,now,thread!.id,now,me.id).all();
+        result=await db.prepare("UPDATE tasks SET status='in_progress',claimant_id=?,claim_expires_at=?,blocker=NULL,result_message_id=NULL,updated_at=? WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM dao_proposals WHERE thread_id=tasks.thread_id) AND COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=tasks.thread_id),0)>=10 AND (status='open' OR (status IN ('in_progress','blocked') AND (claim_expires_at<=? OR claimant_id=?))) RETURNING thread_id").bind(me.id,expires,now,thread!.id,now,me.id).all();
       } else if (action==="release") {
-        result=await db.prepare("UPDATE tasks SET status='open',claimant_id=NULL,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND status IN ('in_progress','blocked') AND claimant_id=? RETURNING thread_id").bind(now,thread!.id,me.id).all();
+        result=await db.prepare("UPDATE tasks SET status='open',claimant_id=NULL,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM dao_proposals WHERE thread_id=tasks.thread_id) AND status IN ('in_progress','blocked') AND claimant_id=? RETURNING thread_id").bind(now,thread!.id,me.id).all();
       } else if (action==="submit" || action==="block") {
         let messageId=null, blocker=null;
         if(action==="submit"){
@@ -906,10 +911,10 @@ async function router(
           const message=await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=? AND author_id=? AND deleted=0").bind(messageId,thread!.id,me.id).first();
           if(!message) fail(400,"Post your result in this thread before submitting it.");
         } else blocker=text(input,"blocker",1,1000);
-        result=await db.prepare("UPDATE tasks SET status=?,result_message_id=?,blocker=?,updated_at=? WHERE thread_id=? AND claimant_id=? AND claim_expires_at>? AND status IN ('in_progress','blocked') AND (?='blocked' OR COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=tasks.thread_id),0)>=10) RETURNING thread_id").bind(action==="submit"?"needs_review":"blocked",messageId,blocker,now,thread!.id,me.id,now,action==="block"?"blocked":"submit").all();
+        result=await db.prepare("UPDATE tasks SET status=?,result_message_id=?,blocker=?,updated_at=? WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM dao_proposals WHERE thread_id=tasks.thread_id) AND claimant_id=? AND claim_expires_at>? AND status IN ('in_progress','blocked') AND (?='blocked' OR COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=tasks.thread_id),0)>=10) RETURNING thread_id").bind(action==="submit"?"needs_review":"blocked",messageId,blocker,now,thread!.id,me.id,now,action==="block"?"blocked":"submit").all();
       } else if(action==="accept" || action==="reopen") {
         if(thread!.author_id!==me.id && !me.is_admin) fail(403,"Only the requester or site administrator can review this task.");
-        result=await db.prepare("UPDATE tasks SET status=?,claimant_id=CASE WHEN ?='open' THEN NULL ELSE claimant_id END,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND status IN ('needs_review','done') AND (?='open' OR EXISTS(SELECT 1 FROM messages WHERE id=tasks.result_message_id AND deleted=0)) RETURNING thread_id").bind(action==="accept"?"done":"open",action==="accept"?"done":"open",now,thread!.id,action==="accept"?"done":"open").all();
+        result=await db.prepare("UPDATE tasks SET status=?,claimant_id=CASE WHEN ?='open' THEN NULL ELSE claimant_id END,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM dao_proposals WHERE thread_id=tasks.thread_id) AND status IN ('needs_review','done') AND (?='open' OR EXISTS(SELECT 1 FROM messages WHERE id=tasks.result_message_id AND deleted=0)) RETURNING thread_id").bind(action==="accept"?"done":"open",action==="accept"?"done":"open",now,thread!.id,action==="accept"?"done":"open").all();
       } else fail(400,"action must be claim, release, block, submit, accept, or reopen.");
       if(!result!.results.length) fail(409,"Task state or claim changed. Reload before acting.");
       task=await readTask();
