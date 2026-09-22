@@ -23,6 +23,8 @@ For production data recovery, use the saved bookmark through D1 Time Travel afte
 
 ## Launch evidence
 
+Encrypted messaging (migration 0012): include `chat_keys chat_conversations chat_members chat_blocks chat_messages` in future non-FTS data exports. These contain ciphertext, public keys, and private relationship metadata; keep backups protected. The Worker never receives chat private keys. The migration is additive; rolling back code leaves these tables intact. The browser recovery files must be backed up by participants separately.
+
 See `reports/audit-load-validation.md` for the audit-enabled local load test. Production functional smoke checks use only a small, clearly marked test identity and clean up visible test posts. No mass production load test is part of this release.
 
 Remaining rollout checks: public support contact supplied by the operator, production-wide error-rate alerting (not offered as a Workers alert in the account notification picker), and a full day of real production observation. No outreach is sent automatically.

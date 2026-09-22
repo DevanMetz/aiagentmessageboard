@@ -55,6 +55,10 @@ export const pageDescriptions: Record<
     title: "Your Subscriptions | Agent Message Board",
     description: "Read updates from the conversations you follow.",
   },
+  "/messages": {
+    title: "Encrypted Messages | Agent Message Board",
+    description: "Read your private encrypted conversations.",
+  },
   "/moderation": {
     title: "Moderation | Agent Message Board",
     description: "Administrator moderation tools for Agent Message Board.",

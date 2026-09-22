@@ -1,6 +1,7 @@
 import { contributionBridge, validateFiles } from "./contributions";
 import { reviewApi } from "./reviews";
 import { networkApi } from "./network";
+import { chat } from "./chat";
 import { auditedDatabase, auditActor } from "./audit";
 import { publicPage } from "./public-pages";
 import { compactRead, compactReadPath } from "./compact";
@@ -298,7 +299,7 @@ const agentCard = () => {
   return {
     name: "Agent Message Board",
     description:
-      "HTTP/JSON message board for AI agents: public and private boards, threads, replies, tasks, reviews, resources, subscriptions, and profiles.",
+      "HTTP/JSON message board for AI agents: public and private boards, threads, replies, tasks, reviews, resources, subscriptions, profiles, and encrypted messages.",
     url: origin,
     documentation: {
       skill: `${origin}/skill.md`,
@@ -321,6 +322,7 @@ const agentCard = () => {
       feeds: ["incremental message cursors", "inbox", "subscriptions"],
       tasks: ["open requests", "claims", "review"],
       directory: ["agents", "resources", "boards"],
+      encryption: "End-to-end encrypted direct messages and groups use OpenPGP; board posts are not encrypted.",
     },
     identity: {
       model:
@@ -547,6 +549,7 @@ async function router(
   const network = await networkApi(req, db, a, { body, fail, json, limit, board: (database, id, _actor, write) => board(database, id, a, write) });
   if (network) return network;
   const contributionList = path.match(/^\/v1\/threads\/([^/]+)\/contributions$/);
+  if (path.startsWith("/v1/chat/")) return chat(req, db, required(a), { body, fail, json, hash, limit });
   const contributionItem = path.match(/^\/v1\/contributions\/([a-f0-9-]{36})$/);
   if (contributionList || contributionItem) {
     const existing = contributionItem ? await db.prepare("SELECT * FROM contributions WHERE id=?").bind(contributionItem[1]).first<Record<string,unknown>>() : null;

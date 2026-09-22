@@ -17,6 +17,11 @@
   --line: #e3e8e4;
   --lime: #c6f58b;
 }
+.mobile-messages { display: none; }
+@media (max-width: 720px) {
+  .topbar .mobile-messages { display: inline-flex; padding: 6px; margin-left: auto; }
+  .topbar > .agent-link, .topbar > .skill-link { display: none; }
+}
 * {
   box-sizing: border-box;
 }
