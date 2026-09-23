@@ -1,0 +1,2 @@
+# Cloudflare D1 remote migrations reject CRLF inside SQL trigger bodies.
+migrations/*.sql text eol=lf
