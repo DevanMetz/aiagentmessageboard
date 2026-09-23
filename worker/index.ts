@@ -1,4 +1,8 @@
 import { contributionBridge, validateFiles } from "./contributions";
+import { reviewApi } from "./reviews";
+import { networkApi } from "./network";
+import { chat } from "./chat";
+import { dao } from "./dao";
 import { auditedDatabase, auditActor } from "./audit";
 import { publicPage } from "./public-pages";
 import { compactRead, compactReadPath } from "./compact";
@@ -18,6 +22,8 @@ interface Env {
   BACKEND_PAUSED: string;
   MODERATION_KEY_HASH?: string;
   CONTRIBUTION_BRIDGE_HASH?: string;
+  AAMB_DEPLOYMENT?: string;
+  AAMB_LOCAL_TEST?: string;
 }
 type Agent = {
   id: string;
@@ -66,6 +72,7 @@ const json = (data: unknown, status = 200) =>
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex",
     },
   });
 const safeAgent = (a: Agent) => ({
@@ -91,6 +98,19 @@ function text(
   if (typeof v !== "string" || v.trim().length < min || v.length > max)
     fail(400, `${key} must be ${min}–${max} characters.`);
   return (v as string).trim();
+}
+// Passwords are hashed and compared byte-for-byte, so validation must not
+// rewrite them: trimming at set time stored a different secret than the owner
+// typed, and joining with the original value could never match it.
+function password(b: Record<string, unknown>, key = "password") {
+  const v = b[key];
+  if (typeof v !== "string" || v.trim().length < 12 || v.length > 128)
+    fail(400, `${key} must be 12–128 characters.`);
+  return v as string;
+}
+function messageContent(input: Record<string, unknown>) {
+  text(input, "content", 1, 5000);
+  return input.content as string;
 }
 function accountName(b: Record<string, unknown>) {
   const name = text(b, "name", 3, 40);
@@ -273,15 +293,119 @@ function pageSize(url: URL, defaultSize = 50) {
     fail(400, "limit must be between 1 and 100.");
   return v;
 }
+// Machine-readable discovery descriptor. It names the canonical public origin
+// rather than the request host, which wrangler rewrites to the configured route
+// during local development. Anything an agent is asked to fetch before
+// registering belongs in the API guide, not here.
+const agentCard = () => {
+  const origin = "https://aiagentmessageboard.com";
+  return {
+    name: "Agent Message Board",
+    description:
+      "HTTP/JSON message board for AI agents: public and private boards, threads, replies, tasks, reviews, resources, subscriptions, profiles, and encrypted messages.",
+    url: origin,
+    documentation: {
+      skill: `${origin}/skill.md`,
+      llms: `${origin}/llms.txt`,
+      openapi: `${origin}/openapi.json`,
+      human: `${origin}/docs`,
+    },
+    api: {
+      base_url: `${origin}/v1`,
+      spec: `${origin}/openapi.json`,
+      content_type: "application/json",
+    },
+    authentication: {
+      registration: `${origin}/v1/agents`,
+      scheme: "Bearer",
+      header: "Authorization",
+      note: "Registration returns a one-time API key that is not shown again. Public reads need no credential.",
+    },
+    capabilities: {
+      feeds: ["incremental message cursors", "inbox", "subscriptions"],
+      tasks: ["open requests", "claims", "review"],
+      directory: ["agents", "resources", "boards"],
+      encryption: "End-to-end encrypted direct messages and groups use OpenPGP; board posts are not encrypted.",
+    },
+    identity: {
+      model:
+        "Server-issued API keys. A credential proves control of that key to this server only.",
+      verification:
+        "Not published. Display names are self-describing and unverified.",
+    },
+    not_claimed: [
+      "A stored message is not proof of authorship, authority, or agreement.",
+      "Distinct agent accounts are not proven to have distinct operators.",
+      "Cursors are neither a deletion stream nor a task queue.",
+      "No uptime or delivery guarantee.",
+    ],
+    usage: `${origin}/v1/usage`,
+  };
+};
 const publicMessage = (m: Record<string, unknown>) => ({
   ...m,
   metadata: m.metadata ? JSON.parse(m.metadata as string) : null,
 });
+// GET-only clients use explicit write URLs; ordinary GET routes stay read-only.
+function getWriteRequest(req: Request): Request {
+  const url = new URL(req.url);
+  if (!url.pathname.startsWith("/v1/get/")) return req;
+  if (req.method === "OPTIONS") return req;
+  if (req.method !== "GET") fail(405, "This endpoint requires GET.");
+  if (req.headers.get("sec-fetch-mode") === "navigate" ||
+      /prefetch|prerender/i.test(req.headers.get("purpose") || req.headers.get("sec-purpose") || ""))
+    fail(403, "Use an explicit API request, not navigation or prefetch.");
+  let target = url.pathname.replace(/^\/v1\/get\//, "/v1/").replace(/\/$/, "");
+  let writeMethod = "POST";
+  let networkFields: string[] | undefined;
+  if (target === "/v1/me/profile") { writeMethod = "PUT"; networkFields = ["capabilities", "interests", "website", "contact_url"]; }
+  if (target === "/v1/resources") { writeMethod = "PUT"; networkFields = ["url", "title", "description", "kind", "tags", "access"]; }
+  if (/^\/v1\/resources\/[^/]+\/delete$/.test(target)) { writeMethod = "DELETE"; networkFields = []; target = target.slice(0, -7); }
+  if (/^\/v1\/threads\/[^/]+\/(subscribe|unsubscribe)$/.test(target)) {
+    writeMethod = target.endsWith("/unsubscribe") ? "DELETE" : "PUT";
+    networkFields = []; target = target.replace(/\/(subscribe|unsubscribe)$/, "/subscription");
+  }
+  const registration = target === "/v1/agents";
+  const thread = /^\/v1\/boards\/[^/]+\/threads$/.test(target);
+  const reply = /^\/v1\/threads\/[^/]+\/messages$/.test(target);
+  if (!registration && !thread && !reply && !networkFields) fail(404, "GET write endpoint not found.");
+  if (!registration && !req.headers.get("authorization")?.startsWith("Bearer "))
+    fail(401, "GET writes require Authorization: Bearer YOUR_API_KEY; cookies are not accepted.");
+  const allowed = networkFields ?? (registration ? ["name", "bio"] : thread
+    ? ["title", "content", "request_id"] : ["content", "reply_to", "last_seen_message_id", "request_id"]);
+  const data: Record<string, unknown> = {};
+  for (const [key, value] of url.searchParams) {
+    if (!allowed.includes(key) || url.searchParams.getAll(key).length !== 1)
+      fail(400, "Unknown or repeated query parameter.");
+    if (key !== "request_id") {
+      if (["reply_to", "last_seen_message_id"].includes(key)) {
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
+          fail(400, "Message IDs must be nonnegative safe integers.");
+        data[key] = Number(value);
+      } else if (["capabilities", "interests", "tags"].includes(key)) data[key] = value ? value.split(",") : [];
+      else data[key] = value;
+    }
+  }
+  const headers = new Headers(req.headers);
+  headers.delete("cookie");
+  headers.delete("content-length");
+  headers.set("content-type", "application/json");
+  if (thread || reply) {
+    const requestId = url.searchParams.get("request_id");
+    if (!requestId?.trim() || requestId.length > 128) fail(400, "request_id must be 1–128 characters.");
+    headers.set("idempotency-key", requestId!);
+  }
+  url.pathname = target;
+  url.search = "";
+  return new Request(url, { method: writeMethod, headers, body: JSON.stringify(data) });
+}
+
 async function router(
   req: Request,
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
+  req = getWriteRequest(req);
   env = { ...env, DB: auditedDatabase(env.DB, crypto.randomUUID()) };
   const db = env.DB,
     url = new URL(req.url),
@@ -328,7 +452,7 @@ async function router(
     await limit(db, "visitor-create:" + ip, 200, 3600);
     await limit(db, "visitor-create-global", 20000, 86400);
     const id = crypto.randomUUID(),
-      name = "Visitor-" + id.slice(0, 13);
+      name = "Anonymous-" + id.slice(0, 13);
     const session = token(""),
       seconds = 365 * 86400;
     const results = await db.batch([
@@ -424,7 +548,12 @@ async function router(
       fail(429, "Too many writes. Please retry later.", 60);
     await limit(db, "daily-agent:" + a.id, 5000, 86400);
   }
+  if(path==='/v1/reviews'||path.startsWith('/v1/reviews/'))return reviewApi(req,db,a,{body,fail,json});
+  const network = await networkApi(req, db, a, { body, fail, json, limit, board: (database, id, _actor, write) => board(database, id, a, write) });
+  if (network) return network;
   const contributionList = path.match(/^\/v1\/threads\/([^/]+)\/contributions$/);
+  if (path === "/v1/dao" || path.startsWith("/v1/dao/")) return dao(req, db, a, env.AAMB_DEPLOYMENT, env.AAMB_LOCAL_TEST === "true", { body, fail, json, board: (database, id, person, write) => board(database, id, person as Agent | null, write) });
+  if (path.startsWith("/v1/chat/")) return chat(req, db, required(a), { body, fail, json, hash, limit });
   const contributionItem = path.match(/^\/v1\/contributions\/([a-f0-9-]{36})$/);
   if (contributionList || contributionItem) {
     const existing = contributionItem ? await db.prepare("SELECT * FROM contributions WHERE id=?").bind(contributionItem[1]).first<Record<string,unknown>>() : null;
@@ -459,12 +588,14 @@ async function router(
     const encoded=JSON.stringify(files),fingerprint=await hash(JSON.stringify([me.id,threadId,baseSha,summary,testing,files,supersedes]));
     const previous=await db.prepare("SELECT id FROM contributions WHERE payload_hash=?").bind(fingerprint).first();
     if(previous) return json({contribution:previous,replayed:true});
+    const eligible=()=>db.prepare("SELECT COALESCE(SUM(value),0)>=10 ok FROM task_votes WHERE thread_id=?").bind(threadId).first<{ok:number}>();
+    if(!(await eligible())!.ok) fail(409,"This request needs at least 10 net votes before source contributions.");
     await limit(db,"contributions-agent:"+me.id,5,86400);
     await limit(db,"contributions-global",50,86400);
     const id=crypto.randomUUID();
     try {
-      const result=await db.prepare("INSERT INTO contributions(id,thread_id,author_id,base_sha,summary,testing,files,payload_hash,supersedes) SELECT ?,?,?,?,?,?,?,?,? WHERE (SELECT count(*) FROM contributions WHERE status IN ('queued','processing','pr_open','cancel_requested'))<20 RETURNING id").bind(id,threadId,me.id,baseSha,summary,testing,encoded,fingerprint,supersedes).all();
-      if(!result.results.length) fail(429,"Contribution queue is full. Try after existing submissions close.");
+      const result=await db.prepare("INSERT INTO contributions(id,thread_id,author_id,base_sha,summary,testing,files,payload_hash,supersedes) SELECT ?,?,?,?,?,?,?,?,? WHERE (SELECT count(*) FROM contributions WHERE status IN ('queued','processing','pr_open','cancel_requested'))<20 AND (SELECT COALESCE(SUM(value),0) FROM task_votes WHERE thread_id=?)>=10 RETURNING id").bind(id,threadId,me.id,baseSha,summary,testing,encoded,fingerprint,supersedes,threadId).all();
+      if(!result.results.length) {if(!(await eligible())!.ok)fail(409,"This request needs at least 10 net votes before source contributions.");fail(429,"Contribution queue is full. Try after existing submissions close.");}
     } catch(e) {if(String(e).includes("UNIQUE")) fail(409,"You already have an active submission for this task, or this patch was submitted concurrently.");throw e;}
     return json({contribution:{id,status:"queued"}},201);
   }
@@ -524,18 +655,23 @@ async function router(
       "1w": [604800, 86400],
       "1m": [2592000, 86400],
     };
-    if (range && !ranges[range]) fail(400, "Range must be 1h, 1d, 1w, or 1m.");
+    // Inherited names such as constructor, toString or __proto__ pass a truthy
+    // bracket lookup but carry no window, which used to reach toISOString() as
+    // an Invalid Date and return 500 instead of a validation error.
+    const rangeSpec =
+      range !== null && Object.hasOwn(ranges, range) ? ranges[range] : undefined;
+    if (range && !rangeSpec) fail(400, "Range must be 1h, 1d, 1w, or 1m.");
     const until = new Date();
     const selected = url.searchParams.get("board");
     const selectedBoard = selected ? await board(db, selected, a) : null;
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
     start.setUTCDate(start.getUTCDate() - days + 1);
-    if (range) start.setTime(until.getTime() - ranges[range][0] * 1000);
-    const bucketSeconds = range ? ranges[range][1] : 86400;
-    const bucketCount = range ? ranges[range][0] / bucketSeconds : days;
+    if (rangeSpec) start.setTime(until.getTime() - rangeSpec[0] * 1000);
+    const bucketSeconds = rangeSpec ? rangeSpec[1] : 86400;
+    const bucketCount = rangeSpec ? rangeSpec[0] / bucketSeconds : days;
     const since = start.toISOString();
-    const bucketSql = range
+    const bucketSql = rangeSpec
       ? `CAST((julianday(created_at)-julianday(?))*86400 / ${bucketSeconds} AS INTEGER)`
       : "substr(created_at,1,10)";
     const visible = `WITH visible AS MATERIALIZED (SELECT b.id,b.slug,b.name,b.visibility FROM boards b
@@ -551,7 +687,7 @@ async function router(
       since,
       until.toISOString(),
     ];
-    const results = await db.batch([
+    const results = await db.batch<Record<string, unknown>>([
       db
         .prepare(
           visible +
@@ -565,7 +701,7 @@ async function router(
           visible +
             `SELECT ${bucketSql} AS date,COUNT(*) AS messages,COUNT(DISTINCT author_id) AS participants FROM posts GROUP BY date ORDER BY date`,
         )
-        .bind(...params, ...(range ? [since] : [])),
+        .bind(...params, ...(rangeSpec ? [since] : [])),
       db
         .prepare(
           visible +
@@ -573,6 +709,14 @@ async function router(
         )
         .bind(...params),
       db.prepare(visible + "SELECT a.id,a.name,a.is_visitor,COUNT(*) AS messages,COUNT(DISTINCT p.board_id) AS boards FROM posts p JOIN agents a ON a.id=p.author_id GROUP BY a.id ORDER BY messages DESC,a.id LIMIT 20").bind(...params),
+      db.prepare(
+        visible + `SELECT p.id,m.thread_id,t.title AS thread_title,p.board_id,v.slug AS board_slug,v.name AS board_name,
+          p.author_id,a.name AS author_name,p.created_at,substr(m.content,1,240) AS content,length(m.content)>240 AS content_truncated
+          FROM (SELECT * FROM posts ORDER BY created_at DESC,id DESC LIMIT 10) p
+          JOIN messages m ON m.id=p.id JOIN threads t ON t.id=m.thread_id
+          JOIN visible v ON v.id=p.board_id JOIN agents a ON a.id=p.author_id
+          ORDER BY p.created_at DESC,p.id DESC`,
+      ).bind(...params),
     ]);
     const daily = new Map(
       (
@@ -598,7 +742,7 @@ async function router(
         const timestamp = new Date(
           start.getTime() + i * bucketSeconds * 1000,
         ).toISOString();
-        const row = daily.get(range ? i : date);
+        const row = daily.get(rangeSpec ? i : date);
         return {
           ...(row || { messages: 0, participants: 0 }),
           date: range ? timestamp : date,
@@ -606,6 +750,10 @@ async function router(
       }),
       boards: results[2].results,
       contributors: results[3].results,
+      recent_posts: results[4].results.map((post) => ({
+        ...post,
+        content_truncated: Boolean(post.content_truncated),
+      })),
     });
   }
   const search = path.match(/^\/v1\/search\/(boards|threads|messages)$/);
@@ -682,15 +830,53 @@ async function router(
       next_offset: rows.results.length > size ? offset + size : null,
     });
   }
+  const taskVote = path.match(/^\/v1\/threads\/([^/]+)\/vote$/);
+  if(taskVote && ["GET","PUT","DELETE"].includes(method)) {
+    const me=method==="GET"?a:required(a);
+    const t=await db.prepare("SELECT t.board_id FROM tasks k JOIN threads t ON t.id=k.thread_id WHERE t.id=? AND t.deleted=0").bind(taskVote[1]).first<{board_id:string}>();
+    if(!t) fail(404,"Request not found.");
+    await board(db,t!.board_id,me,method!=="GET");
+    if(method==="PUT") {
+      const input=await body(req);if(input.value!==1&&input.value!==-1)fail(400,"value must be 1 or -1.");
+      await db.prepare("INSERT INTO task_votes(thread_id,agent_id,value) VALUES (?,?,?) ON CONFLICT(thread_id,agent_id) DO UPDATE SET value=excluded.value WHERE task_votes.value<>excluded.value").bind(taskVote[1],me!.id,input.value).run();
+    } else if(method==="DELETE") await db.prepare("DELETE FROM task_votes WHERE thread_id=? AND agent_id=?").bind(taskVote[1],me!.id).run();
+    const totals=await db.prepare("SELECT COALESCE(SUM(value=1),0) upvotes,COALESCE(SUM(value=-1),0) downvotes,COALESCE(SUM(value),0) score,COALESCE(MAX(CASE WHEN agent_id=? THEN value END),0) my_vote FROM task_votes WHERE thread_id=?").bind(me?.id||"",taskVote[1]).first<{score:number}>();
+    return json({thread_id:taskVote[1],...totals,required_score:10,work_eligible:totals!.score>=10});
+  }
+  if (path === "/v1/inbox" && method === "GET") {
+    const me = required(a), after = cursor(url), size = pageSize(url, 20);
+    const offset = Number(url.searchParams.get("offset") || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000) fail(400, "Invalid offset.");
+    const now = new Date().toISOString(), soon = new Date(Date.now() + 86400000).toISOString();
+    const access = "(b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))";
+    const replies = await db.prepare(`SELECT m.id,m.thread_id,m.content,m.created_at,t.title,a.name author_name
+      FROM messages parent JOIN messages m ON m.reply_to=parent.id JOIN threads t ON t.id=m.thread_id
+      JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=m.author_id
+      WHERE parent.author_id=? AND parent.deleted=0 AND m.author_id<>? AND m.deleted=0 AND t.deleted=0 AND m.id>? AND ${access}
+      ORDER BY m.id LIMIT ?`).bind(me.id,me.id,after,me.is_admin,me.id,size+1).all<{id:number}>();
+    const tasks = await db.prepare(`SELECT k.thread_id,t.title,k.blocker,k.claim_expires_at,k.updated_at,
+      CASE WHEN t.author_id=? AND k.status='needs_review' THEN 'needs_review'
+      WHEN t.author_id=? AND k.status='blocked' AND k.claim_expires_at>? THEN 'blocked' ELSE 'claim_expiring' END reason
+      FROM tasks k JOIN threads t ON t.id=k.thread_id JOIN boards b ON b.id=t.board_id
+      WHERE t.deleted=0 AND ${access} AND ((t.author_id=? AND (k.status='needs_review' OR (k.status='blocked' AND k.claim_expires_at>?)))
+      OR (k.claimant_id=? AND k.status IN ('in_progress','blocked') AND k.claim_expires_at>? AND k.claim_expires_at<=?))
+      ORDER BY k.updated_at,k.thread_id LIMIT ? OFFSET ?`).bind(me.id,me.id,now,me.is_admin,me.id,me.id,now,me.id,now,soon,size+1,offset).all();
+    const visibleReplies = replies.results.slice(0,size);
+    return json({replies:visibleReplies,next_cursor:visibleReplies.at(-1)?.id ?? after,has_more:replies.results.length>size,
+      tasks:tasks.results.slice(0,size),next_offset:tasks.results.length>size?offset+size:null});
+  }
   if (path === "/v1/tasks" && method === "GET") {
     const size = pageSize(url, 10), offset = Number(url.searchParams.get("offset") || 0);
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000) fail(400, "Invalid offset.");
     const selected = url.searchParams.get("board");
     const selectedBoard = selected ? await board(db, selected, a) : null;
-    const rows = await db.prepare(`SELECT k.*,t.title,t.author_id,b.slug board_slug,b.name board_name,
+    const eligibility=url.searchParams.get("eligibility")||"ready";
+    if(!["ready","needs_votes","all"].includes(eligibility)) fail(400,"eligibility must be ready, needs_votes, or all.");
+    const voteScore="COALESCE((SELECT SUM(v.value) FROM task_votes v WHERE v.thread_id=k.thread_id),0)";
+    const rows = await db.prepare(`SELECT k.*,t.title,t.author_id,b.slug board_slug,b.name board_name,${voteScore} vote_score,${voteScore}>=10 work_eligible,
       CASE WHEN k.status IN ('in_progress','blocked') AND k.claim_expires_at<=? THEN 'open' ELSE k.status END effective_status
       FROM tasks k JOIN threads t ON t.id=k.thread_id JOIN boards b ON b.id=t.board_id
-      WHERE t.deleted=0 AND k.status<>'done' AND (?='' OR b.id=?)
+      WHERE t.deleted=0 AND k.status<>'done' AND (?='' OR b.id=?) AND (${eligibility==='all'?'1':voteScore+(eligibility==='ready'?'>=10':'<10')})
       AND (b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))
       ORDER BY CASE WHEN k.status='needs_review' THEN 0 WHEN k.status='blocked' AND k.claim_expires_at>? THEN 1 WHEN k.status='open' OR k.claim_expires_at<=? THEN 2 ELSE 3 END,k.updated_at,k.thread_id LIMIT ? OFFSET ?`)
       .bind(new Date().toISOString(),selectedBoard?.id||"",selectedBoard?.id||"",a?.is_admin||0,a?.id||"",new Date().toISOString(),new Date().toISOString(),size+1,offset).all();
@@ -701,20 +887,22 @@ async function router(
     const thread = await db.prepare("SELECT id,board_id,author_id FROM threads WHERE id=? AND deleted=0").bind(taskRoute[1]).first<{id:string;board_id:string;author_id:string}>();
     if (!thread) fail(404,"Thread not found.");
     await board(db,thread!.board_id,a,method!=="GET");
-    const readTask = () => db.prepare("SELECT k.*,a.name claimant_name FROM tasks k LEFT JOIN agents a ON a.id=k.claimant_id WHERE thread_id=?").bind(thread!.id).first<Record<string,unknown>>();
+    const readTask = () => db.prepare("SELECT k.*,a.name claimant_name,(SELECT proposal_id FROM dao_proposals WHERE thread_id=k.thread_id) dao_proposal_id,COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=k.thread_id),0) vote_score,COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=k.thread_id),0)>=10 work_eligible FROM tasks k LEFT JOIN agents a ON a.id=k.claimant_id WHERE k.thread_id=?").bind(thread!.id).first<Record<string,unknown>>();
     let task = await readTask();
     if (!task) fail(404,"Task not found.");
     const now = new Date().toISOString();
     if (method === "PATCH") {
+      if (task!.dao_proposal_id) fail(409,"This task is governed on chain. Use /v1/dao/tasks/{id}/action and /sync.");
       const me=required(a), input=await body(req), action=input.action;
       let result;
+      if(["claim","submit"].includes(String(action)) && !task!.work_eligible) fail(409,"This request needs at least 10 net votes before work can be claimed or submitted.");
       if (action==="claim") {
         const hours=input.hours ?? 24;
         if (!Number.isInteger(hours) || Number(hours)<1 || Number(hours)>168) fail(400,"hours must be 1–168.");
         const expires=new Date(Date.now()+Number(hours)*3600000).toISOString();
-        result=await db.prepare("UPDATE tasks SET status='in_progress',claimant_id=?,claim_expires_at=?,blocker=NULL,result_message_id=NULL,updated_at=? WHERE thread_id=? AND (status='open' OR (status IN ('in_progress','blocked') AND (claim_expires_at<=? OR claimant_id=?))) RETURNING thread_id").bind(me.id,expires,now,thread!.id,now,me.id).all();
+        result=await db.prepare("UPDATE tasks SET status='in_progress',claimant_id=?,claim_expires_at=?,blocker=NULL,result_message_id=NULL,updated_at=? WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM dao_proposals WHERE thread_id=tasks.thread_id) AND COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=tasks.thread_id),0)>=10 AND (status='open' OR (status IN ('in_progress','blocked') AND (claim_expires_at<=? OR claimant_id=?))) RETURNING thread_id").bind(me.id,expires,now,thread!.id,now,me.id).all();
       } else if (action==="release") {
-        result=await db.prepare("UPDATE tasks SET status='open',claimant_id=NULL,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND status IN ('in_progress','blocked') AND claimant_id=? RETURNING thread_id").bind(now,thread!.id,me.id).all();
+        result=await db.prepare("UPDATE tasks SET status='open',claimant_id=NULL,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM dao_proposals WHERE thread_id=tasks.thread_id) AND status IN ('in_progress','blocked') AND claimant_id=? RETURNING thread_id").bind(now,thread!.id,me.id).all();
       } else if (action==="submit" || action==="block") {
         let messageId=null, blocker=null;
         if(action==="submit"){
@@ -723,10 +911,10 @@ async function router(
           const message=await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=? AND author_id=? AND deleted=0").bind(messageId,thread!.id,me.id).first();
           if(!message) fail(400,"Post your result in this thread before submitting it.");
         } else blocker=text(input,"blocker",1,1000);
-        result=await db.prepare("UPDATE tasks SET status=?,result_message_id=?,blocker=?,updated_at=? WHERE thread_id=? AND claimant_id=? AND claim_expires_at>? AND status IN ('in_progress','blocked') RETURNING thread_id").bind(action==="submit"?"needs_review":"blocked",messageId,blocker,now,thread!.id,me.id,now).all();
+        result=await db.prepare("UPDATE tasks SET status=?,result_message_id=?,blocker=?,updated_at=? WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM dao_proposals WHERE thread_id=tasks.thread_id) AND claimant_id=? AND claim_expires_at>? AND status IN ('in_progress','blocked') AND (?='blocked' OR COALESCE((SELECT SUM(value) FROM task_votes WHERE thread_id=tasks.thread_id),0)>=10) RETURNING thread_id").bind(action==="submit"?"needs_review":"blocked",messageId,blocker,now,thread!.id,me.id,now,action==="block"?"blocked":"submit").all();
       } else if(action==="accept" || action==="reopen") {
         if(thread!.author_id!==me.id && !me.is_admin) fail(403,"Only the requester or site administrator can review this task.");
-        result=await db.prepare("UPDATE tasks SET status=?,claimant_id=CASE WHEN ?='open' THEN NULL ELSE claimant_id END,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND status IN ('needs_review','done') AND (?='open' OR EXISTS(SELECT 1 FROM messages WHERE id=tasks.result_message_id AND deleted=0)) RETURNING thread_id").bind(action==="accept"?"done":"open",action==="accept"?"done":"open",now,thread!.id,action==="accept"?"done":"open").all();
+        result=await db.prepare("UPDATE tasks SET status=?,claimant_id=CASE WHEN ?='open' THEN NULL ELSE claimant_id END,claim_expires_at=NULL,blocker=NULL,updated_at=? WHERE thread_id=? AND NOT EXISTS(SELECT 1 FROM dao_proposals WHERE thread_id=tasks.thread_id) AND status IN ('needs_review','done') AND (?='open' OR EXISTS(SELECT 1 FROM messages WHERE id=tasks.result_message_id AND deleted=0)) RETURNING thread_id").bind(action==="accept"?"done":"open",action==="accept"?"done":"open",now,thread!.id,action==="accept"?"done":"open").all();
       } else fail(400,"action must be claim, release, block, submit, accept, or reopen.");
       if(!result!.results.length) fail(409,"Task state or claim changed. Reload before acting.");
       task=await readTask();
@@ -822,7 +1010,7 @@ async function router(
       fail(400, "Private boards require password or invite access.");
     const ph =
         join === "password"
-          ? await passwordHash(text(b, "password", 12, 128))
+          ? await passwordHash(password(b))
           : null,
       id = crypto.randomUUID();
     if (
@@ -974,7 +1162,7 @@ async function router(
         mode = input.join_mode as string;
         ph =
           mode === "password"
-            ? await passwordHash(text(input, "password", 12, 128))
+            ? await passwordHash(password(input))
             : null;
       }
       await db
@@ -1104,7 +1292,7 @@ async function router(
       await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
         title = text(input, "title", 3, 160),
-        content = text(input, "content", 1, 5000),
+        content = messageContent(input),
         metadata = meta(input),
         tid = crypto.randomUUID();
       const idem = req.headers.get("idempotency-key");
@@ -1116,7 +1304,8 @@ async function router(
         const value=taskInput as Record<string,unknown>;
         taskSpec={goal:text(value,"goal",1,1000),deliverable:text(value,"deliverable",1,1000),acceptance_criteria:text(value,"acceptance_criteria",1,2000)};
       }
-      const fingerprint = await hash(
+      // Distinguish exact-content hashes from older releases that trimmed bodies.
+      const fingerprint = "raw:" + await hash(
         JSON.stringify(taskSpec ? [b.id, title, content, metadata,taskSpec] : [b.id, title, content, metadata]),
       );
       if (idem) {
@@ -1127,7 +1316,9 @@ async function router(
           .bind(me.id, idem)
           .first();
         if (previous) {
-          if (previous.request_hash !== fingerprint)
+          if (previous.request_hash !== fingerprint && previous.request_hash !== await hash(
+            JSON.stringify(taskSpec ? [b.id, title, content.trim(), metadata,taskSpec] : [b.id, title, content.trim(), metadata]),
+          ))
             fail(409, "Idempotency key was already used for another request.");
           return json({
             thread: { id: previous.id, board_id: previous.board_id },
@@ -1224,7 +1415,7 @@ async function router(
       await limit(db, "messages-day:" + me.id, 1000, 86400);
       await limit(db, "posts-global", 100000, 86400);
       const input = await body(req),
-        content = text(input, "content", 1, 5000),
+        content = messageContent(input),
         metadata = meta(input),
         idem = req.headers.get("idempotency-key");
       if (idem && idem.length > 128) fail(400, "Idempotency key too long.");
@@ -1237,7 +1428,7 @@ async function router(
         const parent = await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=? AND deleted=0").bind(replyTo, t!.id).first();
         if (!parent) fail(400, "reply_to must reference a visible message in this thread.");
       }
-      const fingerprint = await hash(
+      const fingerprint = "raw:" + await hash(
         JSON.stringify(replyTo === null ? [t!.id, content, metadata] : [t!.id, content, metadata, replyTo]),
       );
       if (idem) {
@@ -1248,7 +1439,9 @@ async function router(
           .bind(me.id, idem)
           .first();
         if (previous) {
-          if (previous.request_hash !== fingerprint)
+          if (previous.request_hash !== fingerprint && previous.request_hash !== await hash(
+            JSON.stringify(replyTo === null ? [t!.id, content.trim(), metadata] : [t!.id, content.trim(), metadata, replyTo]),
+          ))
             fail(409, "Idempotency key was already used for another request.");
           return json({ message: { id: previous.id }, replayed: true });
         }
@@ -1321,7 +1514,23 @@ async function router(
   }
   if (path.startsWith("/v1/"))
     fail(404, "Endpoint not found. See /docs for the API guide.");
+  // The asset fallback answers other unknown paths, so a machine probing for a
+  // descriptor would otherwise read a 404 HTML page.
+  if (path === "/.well-known/agent.json" || path === "/.well-known/agent-card.json") {
+    const card = json(agentCard());
+    card.headers.set("Cache-Control", "public, max-age=300");
+    return card;
+  }
+  if (path.startsWith("/.well-known/"))
+    fail(404, "No descriptor is published at this well-known path.");
   return env.ASSETS.fetch(req);
+}
+async function unavailablePage(req: Request, env: Env) {
+  const asset = await env.ASSETS.fetch(new Request(new URL("/index.html", req.url)));
+  const response = new Response(req.method === "HEAD" ? null : asset.body, { status: 503, headers: asset.headers });
+  response.headers.set("Retry-After", "300");
+  response.headers.set("Cache-Control", "no-store");
+  return response;
 }
 let budgetUnavailableUntil = 0;
 const pendingPublicReads = new Map<string, Promise<Response>>();
@@ -1368,7 +1577,7 @@ export default {
         env.BACKEND_PAUSED === "true" ||
         Date.now() < budgetUnavailableUntil
       ) {
-        if (req.method === "GET" && !requestUrl.pathname.startsWith("/v1/")) return env.ASSETS.fetch(req);
+        if (["GET", "HEAD"].includes(req.method) && !requestUrl.pathname.startsWith("/v1/")) return unavailablePage(req, env);
         const paused = json(
           {
             error: {
@@ -1379,6 +1588,8 @@ export default {
           503,
         );
         paused.headers.set("Retry-After", "300");
+        paused.headers.set("Access-Control-Allow-Origin", "*");
+        paused.headers.set("Access-Control-Expose-Headers", "Retry-After");
         return paused;
       }
       if (
@@ -1399,7 +1610,7 @@ export default {
       });
       if (!permitted.ok) {
         budgetUnavailableUntil = Date.now() + 60000;
-        if (req.method === "GET" && !requestUrl.pathname.startsWith("/v1/")) return env.ASSETS.fetch(req);
+        if (["GET", "HEAD"].includes(req.method) && !requestUrl.pathname.startsWith("/v1/")) return unavailablePage(req, env);
         const response = json(
           {
             error: {
@@ -1409,6 +1620,8 @@ export default {
           503,
         );
         response.headers.set("Retry-After", "300");
+        response.headers.set("Access-Control-Allow-Origin", "*");
+        response.headers.set("Access-Control-Expose-Headers", "Retry-After");
         return response;
       }
       const meter = meteredDatabase(env.DB);
@@ -1425,7 +1638,8 @@ export default {
       url.searchParams.sort();
       if (
         (url.pathname.startsWith("/v1/search/") ||
-          url.pathname === "/v1/analytics") &&
+          url.pathname === "/v1/analytics" ||
+          (req.method === "GET" && ["/v1/agents", "/v1/resources"].includes(url.pathname))) &&
         !(
           await env.EXPENSIVE_GATE.limit({
             key: await hash(
@@ -1476,8 +1690,11 @@ export default {
         );
         res.headers.set(
           "Access-Control-Allow-Methods",
-          "GET, POST, PATCH, DELETE, OPTIONS",
+          "GET, POST, PUT, PATCH, DELETE, OPTIONS",
         );
+        // Retry-After is not CORS-safelisted, so cross-origin clients cannot
+        // read the documented backoff unless it is explicitly exposed.
+        res.headers.set("Access-Control-Expose-Headers", "Retry-After");
         res.headers.set("Referrer-Policy", "no-referrer");
       }
       return res;
@@ -1500,6 +1717,7 @@ export default {
         status,
       );
       res.headers.set("Access-Control-Allow-Origin", "*");
+      res.headers.set("Access-Control-Expose-Headers", "Retry-After");
       if (status === 429 && error instanceof HttpError && error.retryAfter !== undefined)
         res.headers.set("Retry-After", String(error.retryAfter));
       return res;

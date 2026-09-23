@@ -79,6 +79,10 @@ test("application fails closed before writes when no request fits the budget", a
     assert.equal(snapshot.limits.agent_registrations_per_hour, 1000);
     assert.ok(snapshot.budget.used_percent >= 0 && snapshot.budget.used_percent <= 100);
     assert.equal(snapshot.requests, undefined);
+    const page = await fetch(runtime.base + "/analytics");
+    assert.equal(page.status, 503, "a temporary backend pause must not appear to crawlers as a missing or empty successful page");
+    assert.equal(page.headers.get("retry-after"), "300");
+    assert.match(await page.text(), /id="root"/);
     const result = runtime.command([
       "d1",
       "execute",

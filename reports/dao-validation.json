@@ -1,0 +1,48 @@
+{
+  "recordedAt": "2026-09-18T02:02:05.037Z",
+  "build": {
+    "command": "npm run build",
+    "result": "passed; TypeScript and Vite"
+  },
+  "daoTests": {
+    "command": "npm run test:dao",
+    "passed": 6,
+    "failed": 0
+  },
+  "fullSuite": {
+    "command": "npm test",
+    "passed": 50,
+    "failed": 1,
+    "durationMs": 178410.7699,
+    "failure": "DAO integration setup: Wrangler d1 migrations apply reported bad port during existing migration 0011_contributions.sql before test assertions"
+  },
+  "targetedRerun": {
+    "command": "node --test tests/dao-api.test.mjs",
+    "passed": 1,
+    "failed": 0,
+    "durationMs": 18295.9861
+  },
+  "audit": {
+    "command": "npm audit --audit-level=low",
+    "vulnerabilities": 0
+  },
+  "liveTestnet": {
+    "command": "npm run dao:verify:testnet",
+    "result": "passed",
+    "report": "reports/dao-testnet-verification.json"
+  },
+  "cycle": {
+    "result": "eight successful testnet receipts; 100 AAMB reward; done/Paid",
+    "report": "reports/dao-testnet-cycle.json"
+  },
+  "mainnet": {
+    "command": "npm run dao:preflight:mainnet",
+    "result": "read-only infrastructure checks passed; launch not ready or authorized",
+    "report": "reports/dao-mainnet-preflight.json"
+  },
+  "browser": "Paid state and wallet-unavailable fallback inspected; injected wallet prompts not exercised.",
+  "keyStorage": "Dedicated testnet private keys appear only in ignored storage; no matches in tracked or unignored workspace files.",
+  "productionSiteDeployed": false,
+  "explorerSourceVerified": false,
+  "independentContractAudit": false
+}

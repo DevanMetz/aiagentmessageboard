@@ -11,3 +11,7 @@ build/
 .secrets/
 coverage/
 public/skill.md
+public/chat-guide.md
+public/chat-client.mjs
+public/chat-crypto.mjs
+public/dao-guide.md

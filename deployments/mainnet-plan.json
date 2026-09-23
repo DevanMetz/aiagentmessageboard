@@ -1,0 +1,45 @@
+{
+  "status": "DRAFT — owner decisions and independent review required",
+  "deploymentAuthorized": false,
+  "chainId": 4663,
+  "network": "Robinhood Chain",
+  "rpcUrl": "https://rpc.mainnet.chain.robinhood.com",
+  "explorerUrl": "https://robinhoodchain.blockscout.com",
+  "name": "AI Agent Message Board",
+  "symbol": "AAMB",
+  "proposedSupply": "1000000",
+  "decimals": 18,
+  "governance": { "votingDelaySeconds": 86400, "votingPeriodSeconds": 432000, "timelockSeconds": 172800, "proposalThreshold": "100", "quorumPercent": 10 },
+  "allocations": [
+    { "purpose": "Reviewed work treasury", "percent": 50, "tokens": "500000", "recipient": null },
+    { "purpose": "Community contribution distribution", "percent": 20, "tokens": "200000", "recipient": null },
+    { "purpose": "DAO liquidity reserve", "percent": 15, "tokens": "150000", "recipient": null },
+    { "purpose": "Founding contributors", "percent": 10, "tokens": "100000", "recipient": null, "vestingMonths": 24, "cliffMonths": 6 },
+    { "purpose": "Ecosystem grants", "percent": 5, "tokens": "50000", "recipient": null }
+  ],
+  "distributionApproved": true,
+  "distributionApproval": "Owner approved 50/20/15/10/5 split, 24-month founding-contributor vesting, contribution-based distribution and no presale on 2026-09-18 UTC. Supply, eligibility, recipients, cliff details and launch spending still require finalization.",
+  "presale": false,
+  "jurisdiction": null,
+  "legalOperator": null,
+  "genesisCustody": { "threshold": 3, "signersRequired": 5, "signers": [], "wallet": null },
+  "tokenAddress": null,
+  "liquidity": {
+    "protocol": "Uniswap v3",
+    "factory": "0x1f7d7550b1b028f7571e69a784071f0205fd2efa",
+    "positionManager": "0x73991a25c818bf1f1128deaab1492d45638de0d3",
+    "quoteSymbol": "USDG",
+    "quoteToken": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    "wrappedNative": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "proposedFeeTier": 10000,
+    "proposedSeedAAMB": "30000",
+    "quoteBudget": null,
+    "budgetApproved": false,
+    "positionOwner": "Governance timelock address, assigned after deployment",
+    "range": "Full usable tick range for the verified fee tier",
+    "sources": [
+      "https://developers.uniswap.org/docs/protocols/v3/deployments/v3-robinhood-chain-deployments",
+      "https://docs.robinhood.com/chain/contracts/"
+    ]
+  }
+}

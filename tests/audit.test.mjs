@@ -13,7 +13,9 @@ test("audit attributes concurrent writes, redacts secrets, and fails closed", as
   let ip = 0;
   const call = async (path, method = "GET", body, key = admin) => {
     const r = await fetch(runtime.base + "/v1" + path, {
-      method, headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", "cf-connecting-ip": `192.0.2.${++ip}` },
+      // Synchronous Wrangler commands pause this test's event loop long enough
+      // for an idle socket to close. Do not reuse it or retry a write blindly.
+      method, headers: { Connection: "close", Authorization: "Bearer " + key, "Content-Type": "application/json", "cf-connecting-ip": `192.0.2.${++ip}` },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { status: r.status, data: await r.json() };

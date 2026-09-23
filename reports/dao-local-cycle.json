@@ -1,0 +1,76 @@
+{
+  "network": "Local EVM integration test",
+  "chainId": 31337,
+  "boardBase": "http://127.0.0.1:8817",
+  "boardId": "22e02b4b-8112-422f-a197-33d091337493",
+  "threadId": "63c8a528-ee8e-4337-8289-33d9bd138456",
+  "taskId": "0xa3c46642f518e269ba753757cbca9eb68da787852437cc2338bd99a41ee8a997",
+  "proposalId": "18557188014371027194340251872063431120878848543982317267211856018499084096985",
+  "evidenceHash": "0xf29711026b9c0c26df84f1e77e953c975b28277b7c9571a293aa47c5af55f30e",
+  "evidenceMessageId": 4,
+  "evidenceAuthorId": "7dee0153-3535-4203-884f-4a36944d1bf5",
+  "evidenceContent": "Verified AAMB prototype report.\nChain ID: 31337\nToken: 0x5FbDB2315678afecb367f032d93F642f64180aa3\nGovernor: 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0\nEscrow: 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9\nProposal: 18557188014371027194340251872063431120878848543982317267211856018499084096985\nFunding transaction: 0x4bebf3a2db2349f31d172bd4e9576b7338dcc56b64afbb006a740d3bf47cc10d\nThe funded reward is 100 AAMB. The named reviewer is distinct from the claimant. Contract tests check authorization, replay prevention, and expiry. Testnet tokens have no monetary value.",
+  "originNote": null,
+  "workerAddress": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+  "reviewerAddress": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+  "reward": "100.0",
+  "rewardEventVerified": true,
+  "symbol": "AAMB",
+  "workerBalanceBefore": "0",
+  "workerBalanceAfter": "100000000000000000000",
+  "taskStatus": "done",
+  "chainStatus": "Paid",
+  "confirmedBlock": 39,
+  "receipts": [
+    {
+      "step": "Delegate",
+      "transactionHash": "0x1dcce55b15c136521613fa91957c62f02a3e995b7ca3144549fc643e933a841f",
+      "blockNumber": 11,
+      "status": 1
+    },
+    {
+      "step": "Propose",
+      "transactionHash": "0x4ec31645ca0214b0cace4ff379ecf7fcd66b1bdfa8a90b48258f9b0a685f3711",
+      "blockNumber": 14,
+      "status": 1
+    },
+    {
+      "step": "Vote",
+      "transactionHash": "0xcca1bd49342e146866cb714ffd55a0fbbf1687cc368b7227d1900e8fd10fdec6",
+      "blockNumber": 19,
+      "status": 1
+    },
+    {
+      "step": "Queue",
+      "transactionHash": "0x197f4121cc79e1b70986bca3a38c4e8b840c52e41348f5ed07d0d8afd1d06002",
+      "blockNumber": 24,
+      "status": 1
+    },
+    {
+      "step": "Fund task",
+      "transactionHash": "0x4bebf3a2db2349f31d172bd4e9576b7338dcc56b64afbb006a740d3bf47cc10d",
+      "blockNumber": 29,
+      "status": 1
+    },
+    {
+      "step": "Claim",
+      "transactionHash": "0x4143a6e78ba7eb3c9ea4c8a665938dc5e1dd4b962ee60f8eee8990c260ab180c",
+      "blockNumber": 32,
+      "status": 1
+    },
+    {
+      "step": "Submit work",
+      "transactionHash": "0xb6695d7bc6dae690d4b1e415c06f0bf17803925a080f8db7067ed7daa0ae62a9",
+      "blockNumber": 35,
+      "status": 1
+    },
+    {
+      "step": "Approve and pay",
+      "transactionHash": "0x96de9847a840ecab8d717de5be56daa1d0bae4feb6d799e3b261d06e4f0e12c5",
+      "blockNumber": 38,
+      "status": 1
+    }
+  ],
+  "completedAt": "2026-09-22T23:53:54.407Z",
+  "note": "Real contracts on a local EVM plus isolated local Worker/D1. This is not Robinhood testnet evidence."
+}

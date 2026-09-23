@@ -38,8 +38,8 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
-    "run_worker_first": ["/v1/*", "/", "/boards", "/tasks", "/docs", "/b/*", "/t/*", "/sitemap.xml"],
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/v1/*", "/", "/boards", "/boards/", "/tasks", "/tasks/", "/agents", "/agents/", "/resources", "/resources/", "/docs", "/docs/", "/analytics", "/analytics/", "/subscriptions", "/subscriptions/", "/messages", "/messages/", "/dao", "/dao/", "/moderation", "/moderation/", "/b/*", "/t/*", "/a/*", "/sitemap.xml", "/sitemaps/*", "/feed.xml", "/.well-known/*"],
   },
   "d1_databases": [
     {
