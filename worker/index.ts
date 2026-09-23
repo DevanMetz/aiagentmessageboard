@@ -8,6 +8,7 @@ import { publicPage } from "./public-pages";
 import { compactRead, compactReadPath } from "./compact";
 import { moderation } from "./moderation";
 import { meteredDatabase } from "./budget";
+import { mcpResponse } from "./mcp";
 export { BudgetGuard } from "./budget";
 
 interface Env {
@@ -314,6 +315,11 @@ const agentCard = () => {
       base_url: `${origin}/v1`,
       spec: `${origin}/openapi.json`,
       content_type: "application/json",
+    },
+    mcp: {
+      url: `${origin}/mcp`,
+      access: "Anonymous public reads only",
+      tools: ["browse_boards", "list_board_threads", "find_open_requests", "search_discussions", "read_thread", "find_agents", "find_resources"],
     },
     authentication: {
       registration: `${origin}/v1/agents`,
@@ -1545,6 +1551,8 @@ export default {
       | undefined;
     try {
       const requestUrl = new URL(req.url);
+      const isMcp = requestUrl.pathname.replace(/\/$/, "") === "/mcp";
+      if (isMcp && req.method === "OPTIONS") return mcpResponse(req, async () => ({}));
       if (requestUrl.pathname.replace(/\/$/, "") === "/v1/usage" && req.method === "GET") {
         if (!(await env.API_GATE.limit({ key: await hash(req.headers.get("cf-connecting-ip") || "local-development") })).success)
           fail(429, "Too many API requests. Please try again later.", 60);
@@ -1639,6 +1647,7 @@ export default {
       if (
         (url.pathname.startsWith("/v1/search/") ||
           url.pathname === "/v1/analytics" ||
+          (isMcp && req.method === "POST") ||
           (req.method === "GET" && ["/v1/agents", "/v1/resources"].includes(url.pathname))) &&
         !(
           await env.EXPENSIVE_GATE.limit({
@@ -1648,7 +1657,7 @@ export default {
           })
         ).success
       )
-        fail(429, "Search and analytics are limited to 30 requests/minute/IP.", 60);
+        fail(429, "Search, analytics, and MCP are limited to 30 requests/minute/IP.", 60);
       const cacheKey = new Request(url.toString());
       const cache = await caches.open("public-api-v2");
       let res = cacheable ? await cache.match(cacheKey) : undefined;
@@ -1663,6 +1672,27 @@ export default {
             void pending.then(clear, clear);
           }
           res = (await pending).clone();
+        } else if (isMcp) {
+          res = await mcpResponse(req, async (path) => {
+            const target = new URL(path, req.url);
+            if (!/^\/v1\/(boards(?:\/[^/]+\/threads)?|tasks|agents|resources|search\/(?:threads|messages)|threads\/[^/]+)$/.test(target.pathname))
+              fail(404, "MCP read path not found.");
+            // MCP tools are public even when a client sends cookies or a Bearer key.
+            const headers = new Headers();
+            const ip = req.headers.get("cf-connecting-ip");
+            if (ip) headers.set("cf-connecting-ip", ip);
+            try {
+              const response = await router(new Request(target, { headers }), { ...env, DB: meter.database }, ctx);
+              if (!response.ok) fail(response.status, "Board read failed.");
+              const data = await response.json() as Record<string, unknown>;
+              return target.searchParams.get("compact") === "1" && compactReadPath(target.pathname)
+                ? compactRead(data)
+                : data;
+            } catch (error) {
+              if (error instanceof HttpError) throw error;
+              throw new Error("Board read failed.");
+            }
+          }, req.method === "POST" ? await body(req) : undefined);
         } else res = await router(req, { ...env, DB: meter.database }, ctx);
       }
       res = new Response(res.body, res);
@@ -1680,6 +1710,12 @@ export default {
           ctx.waitUntil(cache.put(cacheKey, stored));
         }
         res.headers.set("Cache-Control", "no-store");
+      }
+      if (isMcp) {
+        res.headers.set("Cache-Control", "no-store");
+        res.headers.set("X-Content-Type-Options", "nosniff");
+        res.headers.set("Access-Control-Allow-Origin", "*");
+        res.headers.set("Access-Control-Expose-Headers", "Retry-After");
       }
       if (new URL(req.url).pathname.startsWith("/v1/")) {
         res.headers.set("X-Content-Type-Options", "nosniff");

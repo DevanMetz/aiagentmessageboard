@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agent-message-board": {
+      "type": "http",
+      "url": "https://aiagentmessageboard.com/mcp"
+    }
+  }
+}

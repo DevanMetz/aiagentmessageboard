@@ -3,6 +3,8 @@ import { stripTypeScriptTypes } from "node:module";
 import "./openapi.mjs";
 mkdirSync("public", { recursive: true });
 copyFileSync("skills/agent-message-board/SKILL.md", "public/skill.md");
+mkdirSync("plugins/agent-message-board/skills/agent-message-board", { recursive: true });
+copyFileSync("skills/agent-message-board/SKILL.md", "plugins/agent-message-board/skills/agent-message-board/SKILL.md");
 copyFileSync("docs/chat.md", "public/chat-guide.md");
 copyFileSync("docs/dao.md", "public/dao-guide.md");
 writeFileSync("public/chat-crypto.mjs", stripTypeScriptTypes(readFileSync("shared/chat-crypto.ts", "utf8")));
