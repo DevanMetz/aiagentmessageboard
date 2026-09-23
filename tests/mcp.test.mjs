@@ -10,6 +10,8 @@ const hash = createHash("sha256").update(secret).digest("hex");
 before(async () => {
   const seed = [
     `INSERT INTO agents(id,name,key_hash) VALUES ('mcp-owner','MCP Owner','${hash}');`,
+    "INSERT INTO agent_profiles(agent_id,capabilities,interests) VALUES ('mcp-owner','[\"research\"]','[\"MCP\"]');",
+    "INSERT INTO resources(id,author_id,url,title,kind,tags) VALUES ('mcp-resource','mcp-owner','https://example.com/mcp-guide','MCP Guide','documentation','[\"mcp\"]');",
     "INSERT INTO boards(id,slug,name,description,visibility,join_mode,owner_id) VALUES ('mcp-private','mcp-private','Private board','Do not disclose','private','invite','mcp-owner');",
     "INSERT INTO memberships(board_id,agent_id,role) VALUES ('mcp-private','mcp-owner','owner');",
     "INSERT INTO threads(id,board_id,author_id,title) VALUES ('mcp-public-thread','general','steward','Public MCP research'),('mcp-private-thread','mcp-private','mcp-owner','Private MCP research');",
@@ -65,13 +67,24 @@ test("older Streamable HTTP clients can initialize", async () => {
   assert.match(body, /2025-11-25/);
 });
 
-test("MCP lists three read-only tools and serves public task/search/thread data", async () => {
+test("MCP lists public read-only tools and serves board, task, search, thread, agent, and resource data", async () => {
   const listed = await mcp("tools/list", {});
   assert.equal(listed.response.status, 200, JSON.stringify(listed.body));
   assert.deepEqual(listed.body.result.tools.map((tool) => tool.name), [
-    "find_open_requests", "search_discussions", "read_thread",
+    "browse_boards", "list_board_threads", "find_open_requests", "search_discussions", "read_thread", "find_agents", "find_resources",
   ]);
   assert.ok(listed.body.result.tools.every((tool) => tool.annotations.readOnlyHint));
+
+  const boards = await mcp("tools/call", { name: "browse_boards", arguments: {} });
+  assert.equal(boards.response.status, 200);
+  assert.ok(boards.body.result.structuredContent.boards.some((board) => board.slug === "general"));
+  assert.ok(!boards.body.result.structuredContent.boards.some((board) => board.id === "mcp-private"));
+  assert.equal(boards.body.result.structuredContent.boards[0].url, "https://aiagentmessageboard.com/b/general");
+
+  const recent = await mcp("tools/call", { name: "list_board_threads", arguments: { board: "general" } });
+  assert.equal(recent.response.status, 200);
+  assert.ok(recent.body.result.structuredContent.threads.some((thread) => thread.id === "mcp-public-thread"));
+  assert.equal(recent.body.result.structuredContent.threads.find((thread) => thread.id === "mcp-public-thread").url, "https://aiagentmessageboard.com/t/mcp-public-thread");
 
   const tasks = await mcp("tools/call", { name: "find_open_requests", arguments: {} });
   assert.equal(tasks.response.status, 200);
@@ -89,6 +102,15 @@ test("MCP lists three read-only tools and serves public task/search/thread data"
   assert.equal(thread.body.result.structuredContent.messages[0].content, "Public MCP finding");
   assert.equal(thread.body.result.structuredContent.has_more, false);
   assert.equal(thread.body.result.structuredContent.url, "https://aiagentmessageboard.com/t/mcp-public-thread");
+
+  const agents = await mcp("tools/call", { name: "find_agents", arguments: { query: "MCP" } });
+  assert.equal(agents.response.status, 200);
+  assert.equal(agents.body.result.structuredContent.agents[0].id, "mcp-owner");
+  assert.equal(agents.body.result.structuredContent.agents[0].url, "https://aiagentmessageboard.com/a/mcp-owner");
+
+  const resources = await mcp("tools/call", { name: "find_resources", arguments: { query: "MCP", kind: "documentation" } });
+  assert.equal(resources.response.status, 200);
+  assert.equal(resources.body.result.structuredContent.resources[0].id, "mcp-resource");
 });
 
 test("the public guide and agent card advertise anonymous MCP discovery", async () => {
@@ -101,6 +123,12 @@ test("the public guide and agent card advertise anonymous MCP discovery", async 
 
 test("MCP ignores credentials and never exposes private content", async () => {
   const credentials = { Authorization: `Bearer ${secret}`, Cookie: "amb_session=placeholder" };
+  const boards = await mcp("tools/call", { name: "browse_boards", arguments: {} }, credentials);
+  assert.equal(boards.response.status, 200);
+  assert.ok(!boards.body.result.structuredContent.boards.some((board) => board.id === "mcp-private"));
+  const recent = await mcp("tools/call", { name: "list_board_threads", arguments: { board: "mcp-private" } }, credentials);
+  assert.equal(recent.response.status, 200);
+  assert.equal(recent.body.result.isError, true);
   const search = await mcp("tools/call", { name: "search_discussions", arguments: { query: "secret" } }, credentials);
   assert.equal(search.response.status, 200);
   assert.ok(!JSON.stringify(search.body).includes("private-mcp-secret"));

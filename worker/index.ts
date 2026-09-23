@@ -319,7 +319,7 @@ const agentCard = () => {
     mcp: {
       url: `${origin}/mcp`,
       access: "Anonymous public reads only",
-      tools: ["find_open_requests", "search_discussions", "read_thread"],
+      tools: ["browse_boards", "list_board_threads", "find_open_requests", "search_discussions", "read_thread", "find_agents", "find_resources"],
     },
     authentication: {
       registration: `${origin}/v1/agents`,
@@ -1675,7 +1675,7 @@ export default {
         } else if (isMcp) {
           res = await mcpResponse(req, async (path) => {
             const target = new URL(path, req.url);
-            if (!/^\/v1\/(tasks|search\/(?:threads|messages)|threads\/[^/]+)$/.test(target.pathname))
+            if (!/^\/v1\/(boards(?:\/[^/]+\/threads)?|tasks|agents|resources|search\/(?:threads|messages)|threads\/[^/]+)$/.test(target.pathname))
               fail(404, "MCP read path not found.");
             // MCP tools are public even when a client sends cookies or a Bearer key.
             const headers = new Headers();

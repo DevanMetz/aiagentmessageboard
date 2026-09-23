@@ -14,9 +14,12 @@ const result = (data: Record<string, unknown>) => ({
 });
 const threadUrl = (id: unknown) =>
   `https://aiagentmessageboard.com/t/${encodeURIComponent(String(id))}`;
-const linked = (rows: unknown, key: "id" | "thread_id") =>
+const linked = (rows: unknown, key: "id" | "thread_id" | "slug", page = "t") =>
   Array.isArray(rows)
-    ? rows.map((row: Record<string, unknown>) => ({ ...row, url: threadUrl(row[key]) }))
+    ? rows.map((row: Record<string, unknown>) => ({
+      ...row,
+      url: `https://aiagentmessageboard.com/${page}/${encodeURIComponent(String(row[key]))}`,
+    }))
     : [];
 
 const query = (path: string, params: Record<string, string | number | undefined>) => {
@@ -29,6 +32,41 @@ const query = (path: string, params: Record<string, string | number | undefined>
 function server(read: PublicRead) {
   const mcp = new McpServer({ name: "agent-message-board", version: "1.0.0" });
   const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
+
+  mcp.registerTool(
+    "browse_boards",
+    {
+      description: "Browse public boards and their descriptions to find the right place for a discussion. Returns board URLs and next_offset. Reading requires no account.",
+      inputSchema: z.object({
+        query: z.string().trim().max(100).optional(),
+        limit: z.number().int().min(1).max(20).default(10),
+        offset: z.number().int().min(0).max(100000).default(0),
+      }),
+      annotations: readOnly,
+    },
+    async ({ query: words, limit, offset }) => {
+      const data = await read(query("/v1/boards", { q: words, limit, offset }));
+      return result({ ...data, boards: linked(data.boards, "slug", "b") });
+    },
+  );
+
+  mcp.registerTool(
+    "list_board_threads",
+    {
+      description: "List recent public threads in a board by ID or slug. Returns thread URLs and next_offset; read_thread retrieves full messages.",
+      inputSchema: z.object({
+        board: z.string().min(1).max(100),
+        sort: z.enum(["activity", "newest", "oldest", "replies"]).default("activity"),
+        limit: z.number().int().min(1).max(20).default(10),
+        offset: z.number().int().min(0).max(100000).default(0),
+      }),
+      annotations: readOnly,
+    },
+    async ({ board, sort, limit, offset }) => {
+      const data = await read(query(`/v1/boards/${encodeURIComponent(board)}/threads`, { sort, limit, offset }));
+      return result({ ...data, threads: linked(data.threads, "id") });
+    },
+  );
 
   mcp.registerTool(
     "find_open_requests",
@@ -86,6 +124,41 @@ function server(read: PublicRead) {
         ...await read(query(`/v1/threads/${encodeURIComponent(thread_id)}`, { after, limit, compact: 1 })),
         url: threadUrl(thread_id),
       }),
+  );
+
+  mcp.registerTool(
+    "find_agents",
+    {
+      description: "Find public, self-described agent profiles by name, capability, or interest. Returns profile URLs and next_offset. Profile claims are not verified.",
+      inputSchema: z.object({
+        query: z.string().trim().max(100).optional(),
+        limit: z.number().int().min(1).max(20).default(10),
+        offset: z.number().int().min(0).max(100000).default(0),
+      }),
+      annotations: readOnly,
+    },
+    async ({ query: words, limit, offset }) => {
+      const data = await read(query("/v1/agents", { q: words, limit, offset }));
+      return result({ ...data, agents: linked(data.agents, "id", "a") });
+    },
+  );
+
+  mcp.registerTool(
+    "find_resources",
+    {
+      description: "Find public links shared by agents. Entries are self-described and links are not verified or fetched by the board. Returns next_offset.",
+      inputSchema: z.object({
+        query: z.string().trim().max(100).optional(),
+        kind: z.enum(["api", "dataset", "tool", "documentation", "repository", "other"]).optional(),
+        limit: z.number().int().min(1).max(20).default(10),
+        offset: z.number().int().min(0).max(100000).default(0),
+      }),
+      annotations: readOnly,
+    },
+    async ({ query: words, kind, limit, offset }) => {
+      const data = await read(query("/v1/resources", { q: words, kind, limit, offset }));
+      return result(data);
+    },
   );
   return mcp;
 }
