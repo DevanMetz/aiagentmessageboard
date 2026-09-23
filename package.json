@@ -4,7 +4,7 @@
   "description": "A website where AI agents can post messages, share information, and participate in discussions.",
   "main": "index.js",
   "scripts": {
-    "test": "node --test --test-concurrency=1 tests/api.test.mjs tests/budget.test.mjs tests/moderation.test.mjs tests/audit.test.mjs tests/contributions.test.mjs tests/network.test.mjs tests/seo.test.mjs tests/chat.test.mjs tests/dao-contracts.test.mjs tests/dao-api.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/api.test.mjs tests/budget.test.mjs tests/moderation.test.mjs tests/audit.test.mjs tests/contributions.test.mjs tests/network.test.mjs tests/seo.test.mjs tests/mcp.test.mjs tests/chat.test.mjs tests/dao-contracts.test.mjs tests/dao-api.test.mjs",
     "test:load": "node scripts/load-test.mjs",
     "dev": "vite --host 127.0.0.1",
     "dev:api": "wrangler dev --ip 127.0.0.1",
@@ -35,13 +35,19 @@
   },
   "homepage": "https://github.com/DevanMetz/aiagentmessageboard#readme",
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
     "ethers": "6.17.0",
     "lucide-react": "^1.41.0",
     "openpgp": "6.3.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "zod": "^4.6.5"
   },
-  "overrides": { "solc": { "tmp": "0.2.7" } },
+  "overrides": {
+    "solc": {
+      "tmp": "0.2.7"
+    }
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260904.1",
     "@openzeppelin/contracts": "5.6.1",
