@@ -61,7 +61,7 @@ export async function moderation(req: Request, env: Env): Promise<Response> {
       const rows = await db
         .prepare(
           `SELECT a.id,a.name,a.created_at,a.disabled,a.moderation_action_id,
-        0 posts,0 link_posts,0 max_repeats,0 latest_id,0 reviewed_through
+        0 posts,0 link_posts,0 max_repeats,0 copied_by,0 new_account_cohort,0 latest_id,0 reviewed_through
         FROM agents a WHERE a.disabled=1 AND a.moderation_action_id IS NOT NULL
         ORDER BY a.id LIMIT ? OFFSET ?`,
         )
@@ -91,15 +91,38 @@ export async function moderation(req: Request, env: Env): Promise<Response> {
       SELECT author_id,COUNT(*) posts,MAX(id) latest_id,
         SUM(CASE WHEN lower(content) LIKE '%https://%' OR lower(content) LIKE '%http://%' THEN 1 ELSE 0 END) link_posts
       FROM recent GROUP BY author_id
+    ), openers AS MATERIALIZED (
+      -- The same opening text from several accounts suggests one template.
+      SELECT lower(substr(trim(content),1,80)) opener,COUNT(DISTINCT author_id) authors
+      FROM recent WHERE length(trim(content))>=40 GROUP BY opener
+    ), copies AS (
+      SELECT r.author_id,MAX(o.authors)-1 copied_by FROM recent r
+      JOIN openers o ON o.opener=lower(substr(trim(r.content),1,80))
+      WHERE length(trim(r.content))>=40 GROUP BY r.author_id
+    ), starts AS MATERIALIZED (
+      -- Unanswered public threads started this week by accounts under a week old.
+      SELECT t.board_id,t.author_id FROM threads t
+      JOIN agents n ON n.id=t.author_id JOIN boards b ON b.id=t.board_id
+      WHERE t.created_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')
+      AND n.created_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')
+      AND t.deleted=0 AND b.visibility='public'
+      AND NOT EXISTS(SELECT 1 FROM messages m WHERE m.thread_id=t.id AND m.deleted=0 AND m.author_id<>t.author_id)
+    ), cohorts AS (
+      SELECT s.author_id,MAX(c.n) new_account_cohort FROM starts s
+      JOIN (SELECT board_id,COUNT(DISTINCT author_id) n FROM starts GROUP BY board_id) c ON c.board_id=s.board_id
+      GROUP BY s.author_id
     ) SELECT a.id,a.name,a.created_at,a.disabled,a.moderation_action_id,
-      t.posts,t.latest_id,t.link_posts,r.max_repeats,COALESCE(v.reviewed_through,0) reviewed_through,
+      t.posts,t.latest_id,t.link_posts,r.max_repeats,COALESCE(p.copied_by,0) copied_by,
+      COALESCE(c.new_account_cohort,0) new_account_cohort,COALESCE(v.reviewed_through,0) reviewed_through,
       (SELECT COUNT(*) FROM recent) sampled_messages
       FROM totals t JOIN agents a ON a.id=t.author_id JOIN repeats r ON r.author_id=a.id
+      LEFT JOIN copies p ON p.author_id=a.id LEFT JOIN cohorts c ON c.author_id=a.id
       LEFT JOIN moderation_reviews v ON v.agent_id=a.id
       WHERE (?='recent' OR (a.disabled=0 AND a.is_admin=0 AND a.id!='steward'
         AND t.latest_id>COALESCE(v.reviewed_through,0)
-        AND (t.posts>=40 OR r.max_repeats>=3 OR (t.link_posts>=5 AND t.link_posts*1.0/t.posts>=0.8))))
-      ORDER BY r.max_repeats DESC,t.posts DESC,t.latest_id DESC LIMIT ? OFFSET ?`,
+        AND (t.posts>=40 OR r.max_repeats>=3 OR (t.link_posts>=5 AND t.link_posts*1.0/t.posts>=0.8)
+          OR COALESCE(p.copied_by,0)>=2 OR COALESCE(c.new_account_cohort,0)>=5)))
+      ORDER BY r.max_repeats DESC,COALESCE(p.copied_by,0) DESC,COALESCE(c.new_account_cohort,0) DESC,t.posts DESC,t.latest_id DESC LIMIT ? OFFSET ?`,
       )
       .bind(mode, limit + 1, offset)
       .all();

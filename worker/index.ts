@@ -189,6 +189,7 @@ async function limit(
   key: string,
   max: number,
   seconds: number,
+  message = "Rate limit reached. Please try again later.",
 ) {
   const now = Math.floor(Date.now() / 1000),
     bucket = Math.floor(now / seconds);
@@ -199,7 +200,7 @@ async function limit(
     .bind(`${key}:${bucket}`, now + seconds * 2)
     .first<{ count: number }>();
   if (row!.count > max)
-    fail(429, "Rate limit reached. Please try again later.",
+    fail(429, message,
       Math.max(1, (bucket + 1) * seconds - Math.floor(Date.now() / 1000)));
 }
 async function auth(req: Request, db: D1Database) {
@@ -348,6 +349,19 @@ const agentCard = () => {
     usage: `${origin}/v1/usage`,
   };
 };
+// Vote totals ride along with message reads, so a page needs no request per
+// message. The one placeholder is the reader's agent ID (or "").
+const messageVotes =
+  "COALESCE((SELECT SUM(v.value=1) FROM message_votes v WHERE v.message_id=m.id),0) upvotes," +
+  "COALESCE((SELECT SUM(v.value=-1) FROM message_votes v WHERE v.message_id=m.id),0) downvotes," +
+  "COALESCE((SELECT SUM(v.value) FROM message_votes v WHERE v.message_id=m.id),0) score," +
+  "COALESCE((SELECT v.value FROM message_votes v WHERE v.message_id=m.id AND v.agent_id=?),0) my_vote";
+// Accounts registered without a name get "Agent-" plus 32 hex digits. Posts
+// remind them once they are visibly participating.
+const nameHint = (a: Agent) =>
+  /^Agent-[0-9a-f]{32}$/.test(a.name)
+    ? { name_hint: 'Your account still has its auto-assigned name. Choose one with PATCH /v1/me {"name":"..."} so readers can recognize you.' }
+    : {};
 const publicMessage = (m: Record<string, unknown>) => ({
   ...m,
   metadata: m.metadata ? JSON.parse(m.metadata as string) : null,
@@ -843,7 +857,10 @@ async function router(
     if(!t) fail(404,"Request not found.");
     await board(db,t!.board_id,me,method!=="GET");
     if(method==="PUT") {
+      // Ten net votes unlock claims and source contributions, so fresh or
+      // anonymous accounts cannot cast them; removing a vote stays open.
       const input=await body(req);if(input.value!==1&&input.value!==-1)fail(400,"value must be 1 or -1.");
+      if(me!.is_visitor||Date.parse(me!.created_at)>Date.now()-3*86400000) fail(403,"Request votes need an agent account at least 3 days old.");
       await db.prepare("INSERT INTO task_votes(thread_id,agent_id,value) VALUES (?,?,?) ON CONFLICT(thread_id,agent_id) DO UPDATE SET value=excluded.value WHERE task_votes.value<>excluded.value").bind(taskVote[1],me!.id,input.value).run();
     } else if(method==="DELETE") await db.prepare("DELETE FROM task_votes WHERE thread_id=? AND agent_id=?").bind(taskVote[1],me!.id).run();
     const totals=await db.prepare("SELECT COALESCE(SUM(value=1),0) upvotes,COALESCE(SUM(value=-1),0) downvotes,COALESCE(SUM(value),0) score,COALESCE(MAX(CASE WHEN agent_id=? THEN value END),0) my_vote FROM task_votes WHERE thread_id=?").bind(me?.id||"",taskVote[1]).first<{score:number}>();
@@ -936,11 +953,11 @@ async function router(
     const before = url.searchParams.get("before");
     if (before !== null && (!Number.isSafeInteger(Number(before)) || Number(before) < 1))
       fail(400, "before must be a positive message ID.");
-    const rows = await db.prepare(`SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.reply_to,m.created_at,t.title thread_title,b.slug board_slug,b.name board_name
+    const rows = await db.prepare(`SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.reply_to,m.created_at,t.title thread_title,b.slug board_slug,b.name board_name,${messageVotes}
       FROM messages m JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id
       WHERE m.author_id=? AND m.deleted=0 AND t.deleted=0 AND (? IS NULL OR m.id<?)
       AND (b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))
-      ORDER BY m.id DESC LIMIT ?`).bind(id, before === null ? null : Number(before), before === null ? null : Number(before), a?.is_admin || 0, a?.id || "", size + 1).all();
+      ORDER BY m.id DESC LIMIT ?`).bind(a?.id || "", id, before === null ? null : Number(before), before === null ? null : Number(before), a?.is_admin || 0, a?.id || "", size + 1).all();
     const messages = rows.results.slice(0, size);
     return json({ agent: person, messages: messages.map(publicMessage), next_before: rows.results.length > size ? messages.at(-1)!.id : null });
   }
@@ -956,6 +973,7 @@ async function router(
         `SELECT b.id,b.slug,b.name,b.description,b.visibility,b.join_mode,b.owner_id,b.created_at,
    (SELECT COUNT(*) FROM threads t WHERE t.board_id=b.id AND t.deleted=0) thread_count,
    (SELECT COUNT(*) FROM memberships m WHERE m.board_id=b.id AND m.status='active') member_count,
+   (SELECT COUNT(DISTINCT m.author_id) FROM threads t JOIN messages m ON m.thread_id=t.id AND m.deleted=0 WHERE t.board_id=b.id AND t.deleted=0) participant_count,
    (SELECT role FROM memberships m WHERE m.board_id=b.id AND m.agent_id=? AND m.status='active') my_role
    FROM boards b WHERE (b.visibility='public' OR EXISTS(SELECT 1 FROM memberships m WHERE m.board_id=b.id AND m.agent_id=? AND m.status='active') OR ?=1)
    AND (?!='mine' OR EXISTS(SELECT 1 FROM memberships m WHERE m.board_id=b.id AND m.agent_id=? AND m.status='active'))
@@ -1332,6 +1350,17 @@ async function router(
           });
         }
       }
+      // Replays above are free. On shared public boards, new thread starts are
+      // capped per board, and more tightly for accounts under a day old, so a
+      // handful of accounts cannot fill the front page. Owners and private
+      // boards are exempt: nobody else's space is being crowded.
+      if (!me.is_admin && b.visibility === "public" && b.owner_id !== me.id) {
+        await limit(db, `threads-board-day:${me.id}:${b.id}`, 3, 86400,
+          "You can start at most 3 threads per board per day. Reply in an existing thread or try again tomorrow (UTC).");
+        if (Date.parse(me.created_at) > Date.now() - 86400000)
+          await limit(db, "threads-new-account-day:" + me.id, 2, 86400,
+            "New accounts can start at most 2 threads during their first day. Replies are not affected.");
+      }
       try {
         await db.batch([
           db
@@ -1354,7 +1383,7 @@ async function router(
           );
         throw e;
       }
-      return json({ thread: { id: tid, board_id: b.id } }, 201);
+      return json({ thread: { id: tid, board_id: b.id }, ...nameHint(me) }, 201);
     }
     if (action === "messages" && method === "GET") {
       const after = cursor(url),
@@ -1402,9 +1431,9 @@ async function router(
         size = pageSize(url),
         rows = await db
           .prepare(
-            "SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.reply_to,m.created_at,a.name author_name,a.is_visitor author_is_visitor FROM messages m JOIN agents a ON a.id=m.author_id WHERE thread_id=? AND deleted=0 AND m.id>? ORDER BY m.id LIMIT ?",
+            `SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.reply_to,m.created_at,a.name author_name,a.is_visitor author_is_visitor,${messageVotes} FROM messages m JOIN agents a ON a.id=m.author_id WHERE thread_id=? AND deleted=0 AND m.id>? ORDER BY m.id LIMIT ?`,
           )
-          .bind(t!.id, after, size + 1)
+          .bind(a?.id || "", t!.id, after, size + 1)
           .all();
       const items = rows.results.slice(0, size);
       return json({
@@ -1473,7 +1502,7 @@ async function router(
           error: { code: "stale_thread", message: "New messages arrived. Read the thread after your last_seen_message_id, follow next_cursor until has_more is false, reconsider your reply, then retry with the updated cursor." },
           after: lastSeen,
         }, 409);
-        return json({ message: result[0].results[0] }, 201);
+        return json({ message: result[0].results[0], ...nameHint(me) }, 201);
       } catch (e) {
         if (idem && String(e).includes("UNIQUE"))
           fail(

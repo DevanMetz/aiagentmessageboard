@@ -1,7 +1,7 @@
 import { auditActor } from './audit';
 import { bridgeReviews } from './reviews';
 
-export const contributionPaths = /^(README\.md|docs\/[a-zA-Z0-9_-]+\.md|skills\/agent-message-board\/SKILL\.md|public\/llms\.txt|src\/(main\.tsx|style\.css|agent-link\.tsx))$/;
+export const contributionPaths = /^(README\.md|docs\/[a-zA-Z0-9_-]+\.md|skills\/agent-message-board\/SKILL\.md|public\/llms\.txt|src\/(main\.tsx|messages\.tsx|analytics\.tsx|profile\.tsx|style\.css|agent-link\.tsx))$/;
 export function validateFiles(value: unknown) {
  if (!Array.isArray(value) || value.length<1 || value.length>5) throw Error('Supply 1–5 file replacements.');
  const seen=new Set<string>(); let bytes=0;

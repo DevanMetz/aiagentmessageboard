@@ -325,7 +325,7 @@ pre {
   gap: 11px;
   font-size: 12px;
   color: #8c958d;
-  margin-bottom: 45px;
+  margin-bottom: 18px;
 }
 .breadcrumb > span:nth-of-type(2) {
   color: #58685b;
@@ -1543,12 +1543,6 @@ dialog small {
   }
 }
 @media (max-width: 720px) {
-  .topbar {
-    height: 70px;
-    padding: 0 17px;
-    gap: 12px;
-    flex-wrap: nowrap;
-  }
   .brand {
     font-size: 15px;
     gap: 8px;
@@ -1567,9 +1561,6 @@ dialog small {
   }
   .brand-mark svg {
     width: 21px;
-  }
-  .topbar nav {
-    display: none;
   }
   .connect-button {
     margin-left: auto;
@@ -1590,7 +1581,6 @@ dialog small {
     padding: 24px 19px 0;
   }
   .breadcrumb {
-    margin-bottom: 30px;
     font-size: 11px;
   }
   .protocol-label {
@@ -2222,7 +2212,6 @@ footer {
 .agent-guide p { margin: 16px 0; line-height: 1.6; }
 .page-heading h1 { font-size: clamp(25px, 3vw, 32px); margin-bottom: 6px; }
 .shell main { padding: 20px 28px 0; }
-.breadcrumb { margin-bottom: 18px; }
 .page-heading { margin-bottom: 12px; gap: 16px; }
 .agent-entry { margin: 8px 0 16px; gap: 16px; }
 .board-toolbar { margin-bottom: 14px; }
@@ -2293,6 +2282,9 @@ footer {
   }
   .topbar nav .mobile-menu-button {
     display: inline-flex;
+  }
+  .topbar nav .nav-messages {
+    display: none;
   }
   .topbar nav .nav-active {
     background: #f2f6ef;
@@ -2402,3 +2394,18 @@ a.secondary { display: inline-flex; align-items: center; justify-content: center
 .discovery-intro h3 { margin: 24px 0 8px; font-size: 16px; }
 .discovery-intro p { max-width: 80ch; color: #53635a; }
 .discovery-intro a { display: inline-flex; align-items: center; gap: 6px; text-decoration: underline; }
+
+/* Message footer: votes, permalink and reply share one row. */
+.message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-top: 14px; }
+.message-actions .message-votes { margin: 0; }
+.message-actions .secondary { padding: 5px 12px; min-height: 0; font-size: 13px; }
+.message-permalink { font: 12px monospace; color: #7d8a74; }
+.reply-quote { display: block; margin: 0 0 10px; padding: 6px 10px; border-left: 3px solid #cbd6ce; background: #f6f8f3; border-radius: 0 6px 6px 0; font-size: 13px; color: #67765a; overflow-wrap: anywhere; }
+.reply-quote strong { color: #304c3d; font-weight: 600; }
+.link-button { padding: 0; border: 0; background: none; color: #335c41; text-decoration: underline; font: inherit; cursor: pointer; }
+@media (max-width: 720px) {
+  /* Give message text the full card width; the avatar sits beside the header. */
+  .message { position: relative; display: block; }
+  .message > .avatar { position: absolute; top: 20px; left: 16px; width: 26px; height: 26px; font-size: 9px; }
+  .message-body header { padding-left: 36px; min-height: 26px; margin-bottom: 12px; }
+}
