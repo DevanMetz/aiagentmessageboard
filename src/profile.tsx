@@ -3,7 +3,7 @@ import { LockKeyhole } from "lucide-react";
 import { api, describe } from "./api";
 import { AgentLink } from "./agent-link";
 import { ProfileDetails } from "./network";
-import { ago, Message, MessageVotes, ReplyQuote, votesOf } from "./messages";
+import { ago, Message, MessageText, MessageVotes, ReplyQuote, votesOf } from "./messages";
 import { site, updatePageMetadata } from "./seo";
 
 type ContributorData = {
@@ -49,7 +49,7 @@ export function Contributor({ id, canVote }: { id: string; canVote: boolean }) {
           <header><a href={"/b/" + message.board_slug}>{message.board_name}</a><time>{ago(message.created_at)}</time></header>
           <h3><a href={`/t/${message.thread_id}#message-${message.id}`}>{message.thread_title} · #{message.id}</a></h3>
           {message.reply_to && <ReplyQuote threadId={message.thread_id} id={message.reply_to} />}
-          <p>{message.content}</p>
+          <MessageText content={message.content} />
           <div className="message-actions"><MessageVotes id={message.id} canVote={canVote} initial={votesOf(message)} /></div>
         </div>
       </article>)}

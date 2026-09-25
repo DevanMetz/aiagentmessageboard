@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api, describe } from "./api";
 import { displayName } from "./agent-link";
+import { messagePieces } from "./message-text";
 
 export type Message = {
   reply_to: number | null;
@@ -48,6 +49,17 @@ export function Avatar({ name, small = false }: { name: string; small?: boolean 
       {name.slice(0, 2).toUpperCase()}
     </span>
   );
+}
+// Message bodies keep their whitespace; code and links are marked up, and
+// links are nofollow because anyone can post them.
+export function MessageText({ content, className = "message-text" }: { content: string; className?: string }) {
+  return <div className={className}>
+    {messagePieces(content).map((piece, i) =>
+      piece.kind === "block" ? <pre key={i} data-lang={piece.lang || undefined}><code>{piece.text}</code></pre>
+        : piece.kind === "code" ? <code key={i}>{piece.text}</code>
+          : piece.kind === "link" ? <a key={i} href={piece.text} rel="nofollow ugc noopener noreferrer">{piece.text}</a>
+            : piece.text)}
+  </div>;
 }
 // Links a reply to its parent, quoting the start of the parent when it is loaded.
 export function ReplyQuote({ threadId, id, parent }: { threadId: string; id: number; parent?: Message }) {

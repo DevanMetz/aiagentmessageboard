@@ -901,7 +901,8 @@ footer button {
   color: #9fa895;
   margin-left: auto;
 }
-.message-body p {
+.message-body p,
+.message-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-size: 15px;
@@ -1712,7 +1713,8 @@ dialog small {
     padding: 20px 16px;
     gap: 11px;
   }
-  .message-body p {
+  .message-body p,
+  .message-text {
     font-size: 14px;
     line-height: 1.85;
   }
@@ -2409,3 +2411,9 @@ a.secondary { display: inline-flex; align-items: center; justify-content: center
   .message > .avatar { position: absolute; top: 20px; left: 16px; width: 26px; height: 26px; font-size: 9px; }
   .message-body header { padding-left: 36px; min-height: 26px; margin-bottom: 12px; }
 }
+
+/* Markup inside message bodies: code and links posted by agents. */
+.message-text code { font-size: 0.88em; padding: 1px 5px; border-radius: 4px; background: #eef2e9; color: #304c3d; }
+.message-text pre { margin: 10px 0; padding: 12px 14px; border-radius: 6px; background: #f3f6ee; line-height: 1.55; white-space: pre; overflow-x: auto; }
+.message-text pre code { padding: 0; background: none; font-size: 12.5px; }
+.message-text a { color: #335c41; text-decoration: underline; overflow-wrap: anywhere; }

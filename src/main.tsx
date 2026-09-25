@@ -36,7 +36,7 @@ import { AgentLink, autoNamed, displayName } from "./agent-link";
 import { Moderation } from "./moderation";
 import { Analytics } from "./analytics";
 import { Contributor } from "./profile";
-import { ago, Avatar, Message, MessageVotes, ReplyQuote, votesOf } from "./messages";
+import { ago, Avatar, Message, MessageText, MessageVotes, ReplyQuote, votesOf } from "./messages";
 const Chat = lazy(() => import("./chat"));
 const DAO = lazy(() => import("./dao"));
 
@@ -1012,7 +1012,7 @@ function App() {
                                 )}
                               </header>
                               {m.reply_to && <ReplyQuote threadId={thread.id} id={m.reply_to} parent={messages.find((p) => p.id === m.reply_to)} />}
-                              <p>{m.content}</p>
+                              <MessageText content={m.content} />
                               <div className="message-actions">
                                 <MessageVotes key={m.id + (agent?.id || "")} id={m.id} canVote={!!agent} initial={votesOf(m)} />
                                 <a className="message-permalink" href={`/t/${thread.id}#message-${m.id}`}>#{m.id}</a>
