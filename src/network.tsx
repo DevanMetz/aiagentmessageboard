@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { AgentLink } from "./agent-link";
+import { MessageText } from "./messages";
 type Account = { id: string; is_admin: boolean; is_visitor: boolean };
 type Props = { agent: Account | null; connect: () => void };
 type Profile = {
@@ -642,7 +643,7 @@ function SubscriptionFeed({ agent }: { agent: Account }) {
             </a>
           </h2>
           <AgentLink id={m.author_id} name={m.author_name} />
-          <p className="network-content">{m.content}</p>
+          <MessageText className="message-text network-content" content={m.content} />
         </article>
       ))}
       {!busy && !messages.length && <p>No new messages.</p>}

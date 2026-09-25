@@ -11,6 +11,12 @@ async function call(path,method='GET',body,key) {
  const r=await fetch(runtime.base+'/v1'+path,{method,headers:{'Content-Type':'application/json','cf-connecting-ip':`198.51.100.${ip++}`,...(key?{Authorization:'Bearer '+key}:{})},body:body===undefined?undefined:JSON.stringify(body)});
  return {status:r.status,data:await r.json()};
 }
+// Ten upvotes from accounts old enough to cast request votes.
+async function vote(thread) {
+ const voters=[];for(let i=0;i<10;i++)voters.push((await call('/agents','POST',{})).data);
+ runtime.command(['d1','execute','aiagentmessageboard','--local','--persist-to',runtime.persist,'--command',`UPDATE agents SET created_at='2000-01-01T00:00:00.000Z' WHERE id IN (${voters.map(v=>`'${v.agent.id}'`).join(',')})`]);
+ for(const voter of voters)assert.equal((await call('/threads/'+thread+'/vote','PUT',{value:1},voter.api_key)).status,200);
+}
 const payload={base_sha:'a'.repeat(40),summary:'Clarify the real onboarding steps.',testing:'Local documentation review only.',publish_consent:true,files:[{path:'README.md',content:'Example replacement\n'}]};
 test('contribution boundary: consent, scopes, immutable retries, concurrency, cancellation, revisions, bridge isolation',async()=>{
  const a=(await call('/agents','POST',{})).data,b=(await call('/agents','POST',{})).data;
@@ -21,7 +27,7 @@ test('contribution boundary: consent, scopes, immutable retries, concurrency, ca
  for(const path of ['../README.md','.github/workflows/ci.yml','worker/index.ts','src/moderation.tsx','src/../main.tsx'])assert.equal((await call(route,'POST',{...payload,files:[{path,content:'x'}]},a.api_key)).status,400);
  assert.equal((await call(route,'POST',{...payload,files:[{path:'README.md',content:'x'.repeat(200001)}]},a.api_key)).status,400);
  assert.equal((await call(route,'POST',payload,a.api_key)).status,409);
- for(let i=0;i<10;i++){const voter=(await call('/agents','POST',{})).data;assert.equal((await call('/threads/'+t+'/vote','PUT',{value:1},voter.api_key)).status,200);}
+ await vote(t);
  const created=await call(route,'POST',payload,a.api_key);assert.equal(created.status,201);const id=created.data.contribution.id;
  assert.equal((await call(route,'POST',payload,a.api_key)).data.replayed,true);
  assert.equal((await call(route,'POST',{...payload,summary:'A different active change'},a.api_key)).status,409);
@@ -79,7 +85,7 @@ test('contribution boundary: consent, scopes, immutable retries, concurrency, ca
  assert.equal((await call('/reviews/'+fresh.id,'GET',undefined,b.api_key)).status,404);
  sql("UPDATE boards SET visibility='public' WHERE id='help'");
  // Restore votes for the contribution revision checks below.
- for(let i=0;i<10;i++){const voter=(await call('/agents','POST',{})).data;await call('/threads/'+t+'/vote','PUT',{value:1},voter.api_key);}
+ await vote(t);
  assert.equal((await call('/contributions/'+id,'DELETE',undefined,a.api_key)).status,200);
  assert.equal((await call('/reviews','GET',undefined,b.api_key)).data.reviews.length,0);
  assert.equal((await call('/reviews/'+fresh.id,'GET',undefined,b.api_key)).status,404);

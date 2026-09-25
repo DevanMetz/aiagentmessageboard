@@ -1,5 +1,5 @@
 import { api, describe, errorCode } from "./api";
-import { AgentDirectory, ResourceDirectory, Subscriptions, FollowThread, ProfileDetails } from "./network";
+import { AgentDirectory, ResourceDirectory, Subscriptions, FollowThread } from "./network";
 import { agentEndpoints, agentMcpCommands, agentMcpUrl, agentNotes } from "./agent-guide";
 import { discoveryQuestions, pageDescriptions, site, updatePageMetadata } from "./seo";
 import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -32,8 +32,11 @@ import {
   X,
 } from "lucide-react";
 import "./style.css";
-import { AgentLink } from "./agent-link";
+import { AgentLink, autoNamed, displayName } from "./agent-link";
 import { Moderation } from "./moderation";
+import { Analytics } from "./analytics";
+import { Contributor } from "./profile";
+import { ago, Avatar, Message, MessageText, MessageVotes, ReplyQuote, votesOf } from "./messages";
 const Chat = lazy(() => import("./chat"));
 const DAO = lazy(() => import("./dao"));
 
@@ -56,6 +59,7 @@ type Board = {
   my_role?: string;
   thread_count?: number;
   member_count?: number;
+  participant_count?: number;
 };
 type Thread = {
   is_task?: number;
@@ -68,49 +72,7 @@ type Thread = {
   message_count: number;
   preview: string;
 };
-type Message = {
-  reply_to: number | null;
-  id: number;
-  author_id: string;
-  author_name: string;
-  author_is_visitor: number;
-  content: string;
-  metadata: Record<string, unknown> | null;
-  created_at: string;
-};
 type Member = { id: string; name: string; role: string; status: string };
-function ago(value: string) {
-  const minutes = Math.max(
-    0,
-    Math.floor((Date.now() - new Date(value).getTime()) / 60000),
-  );
-  return minutes < 1
-    ? "just now"
-    : minutes < 60
-      ? `${minutes}m ago`
-      : minutes < 1440
-        ? `${Math.floor(minutes / 60)}h ago`
-        : new Date(value).toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-          });
-}
-function Avatar({ name, small = false }: { name: string; small?: boolean }) {
-  return (
-    <span
-      className={"avatar " + (small ? "small" : "")}
-      style={
-        {
-          "--avatar-hue": String(
-            [...name].reduce((a, c) => a + c.charCodeAt(0), 0) % 360,
-          ),
-        } as React.CSSProperties
-      }
-    >
-      {name.slice(0, 2).toUpperCase()}
-    </span>
-  );
-}
 type PublicUsage = {
   cycle: { start: string; end: string };
   budget: { estimated_used_usd: number; limit_usd: number; used_percent: number };
@@ -487,7 +449,7 @@ function App() {
             Boards
           </a>
           <a href="/messages"
-            className={path === "/messages" ? "nav-active" : ""}
+            className={"nav-messages" + (path === "/messages" ? " nav-active" : "")}
             aria-current={path === "/messages" ? "page" : undefined}
             onClick={(event) => followLink(event, "/messages")}
           >
@@ -815,11 +777,21 @@ function App() {
                                 {b.thread_count}{" "}
                                 {b.thread_count === 1 ? "thread" : "threads"}
                               </span>
-                              <span>
-                                <Users size={14} />
-                                {b.member_count}{" "}
-                                {b.member_count === 1 ? "member" : "members"}
-                              </span>
+                              {/* Anyone can post on a public board without joining,
+                                  so public cards count posting accounts instead. */}
+                              {b.visibility === "public" && b.participant_count !== undefined ? (
+                                <span>
+                                  <Users size={14} />
+                                  {b.participant_count}{" "}
+                                  {b.participant_count === 1 ? "participant" : "participants"}
+                                </span>
+                              ) : (
+                                <span>
+                                  <Users size={14} />
+                                  {b.member_count}{" "}
+                                  {b.member_count === 1 ? "member" : "members"}
+                                </span>
+                              )}
                               {b.my_role && (
                                 <span className="joined">
                                   <Check size={12} />
@@ -1039,14 +1011,16 @@ function App() {
                                   </button>
                                 )}
                               </header>
-                              {m.reply_to && <a href={`/t/${thread.id}#message-${m.reply_to}`}>In reply to message #{m.reply_to}</a>}
-                              <p>{m.content}</p>
-                              <MessageVotes key={m.id + (agent?.id || "")} id={m.id} canVote={!!agent} />
-                              <a href={`/t/${thread.id}#message-${m.id}`}>#{m.id}</a>
-                              {agent && <button className="secondary" onClick={() => {
-                                setReplyTo(m.id);
-                                document.getElementById("reply")?.focus();
-                              }}>Reply</button>}
+                              {m.reply_to && <ReplyQuote threadId={thread.id} id={m.reply_to} parent={messages.find((p) => p.id === m.reply_to)} />}
+                              <MessageText content={m.content} />
+                              <div className="message-actions">
+                                <MessageVotes key={m.id + (agent?.id || "")} id={m.id} canVote={!!agent} initial={votesOf(m)} />
+                                <a className="message-permalink" href={`/t/${thread.id}#message-${m.id}`}>#{m.id}</a>
+                                {agent && <button className="secondary" onClick={() => {
+                                  setReplyTo(m.id);
+                                  document.getElementById("reply")?.focus();
+                                }}>Reply</button>}
+                              </div>
                               {m.metadata && (
                                 <details>
                                   <summary>Structured metadata</summary>
@@ -1104,7 +1078,9 @@ function App() {
                               {replyTo && <p>Replying to message #{replyTo} <button type="button" onClick={() => setReplyTo(null)}>Cancel</button></p>}
                               <label htmlFor="reply">
                                 Continue the conversation{" "}
-                                <span>as <AgentLink id={agent.id} name={agent.name} /></span>
+                                <span>as <AgentLink id={agent.id} name={agent.name} />
+                                  {autoNamed(agent.name) && <> · <button type="button" className="link-button" onClick={() => open("account")}>Choose a name</button></>}
+                                </span>
                               </label>
                               <textarea
                                 id="reply"
@@ -1541,7 +1517,8 @@ function App() {
             </div>
             <h2 id="dialog-title">Start a conversation.</h2>
             <p className="modal-intro">
-              Posting in {board?.name} as {agent?.name}.
+              Posting in {board?.name} as {displayName(agent?.name || "")}.
+              {agent && autoNamed(agent.name) && <> <button type="button" className="link-button" onClick={() => open("account")}>Choose a name first</button></>}
             </p>
             <form
               onSubmit={(e) => {
@@ -1956,447 +1933,3 @@ createRoot(document.getElementById("root")!).render(
     {location.pathname.replace(/\/$/, "") === "/moderation" ? <Moderation /> : <App />}
   </React.StrictMode>,
 );
-type AnalyticsData = {
-  contributors: { id: string; name: string; is_visitor: number; messages: number; boards: number }[];
-  recent_posts: {
-    id: number;
-    thread_id: string;
-    thread_title: string;
-    board_slug: string;
-    board_name: string;
-    author_id: string;
-    author_name: string;
-    created_at: string;
-    content: string;
-    content_truncated: boolean;
-  }[];
-  totals: {
-    boards: number;
-
-    threads: number;
-
-    messages: number;
-
-    participants: number;
-  };
-
-  daily: { date: string; messages: number; participants: number }[];
-
-  boards: {
-    id: string;
-
-    slug: string;
-
-    name: string;
-
-    visibility: string;
-
-    messages: number;
-
-    participants: number;
-  }[];
-};
-
-function Analytics({ navigate }: { navigate: (path: string) => void }) {
-  const [range, setRange] = useState("1d"),
-    [data, setData] = useState<AnalyticsData | null>(null),
-    [error, setError] = useState(""),
-    [refresh, setRefresh] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    setData(null);
-
-    setError("");
-
-    api<AnalyticsData>(`/analytics?range=${range}`)
-      .then((r) => {
-        if (!cancelled) setData(r);
-      })
-
-      .catch((e) => {
-        if (!cancelled) setError(e.message);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [range, refresh]);
-
-  const interval =
-    range === "1h" ? "5-minute" : range === "1d" ? "Hourly" : "Daily";
-
-  return (
-    <section className="analytics-page">
-      <div className="analytics-heading">
-        <div>
-          <p className="eyebrow">THE NETWORK IN NUMBERS</p>
-
-          <h1>Board activity</h1>
-
-          <p>Public boards and private boards you can access.</p>
-        </div>
-
-        <div className="analytics-controls">
-          <label>
-            Period{" "}
-            <select
-              value={range}
-
-              onChange={(e) => setRange(e.target.value)}
-            >
-              <option value="1h">1 hour</option>
-
-              <option value="1d">1 day</option>
-
-              <option value="1w">1 week</option>
-
-              <option value="1m">1 month (30 days)</option>
-            </select>
-          </label>{" "}
-          <button
-            className="btn secondary"
-
-            onClick={() => setRefresh((r) => r + 1)}
-          >
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
-
-      {!data && !error && <p role="status">Loading activity…</p>}
-
-      {data && (
-        <>
-          <div className="analytics-cards">
-            {(
-              [
-                ["Visible boards", data.totals.boards],
-
-                ["New threads", data.totals.threads],
-
-                ["Messages", data.totals.messages],
-
-                ["Active participants", data.totals.participants],
-              ] as const
-            ).map(([label, value]) => (
-              <div key={label}>
-                <span>{label}</span>
-
-                <strong>{value.toLocaleString()}</strong>
-              </div>
-            ))}
-          </div>
-
-          <div className="analytics-graphs">
-            <ActivityGraph
-              title="Messages"
-              metric="messages"
-              rows={data.daily}
-              interval={interval}
-            />
-
-            <ActivityGraph
-              title="Active users"
-              metric="participants"
-              rows={data.daily}
-              interval={interval}
-            />
-          </div>
-
-          <section className="analytics-panel" aria-labelledby="recent-posts-heading">
-            <h2 id="recent-posts-heading">Recent posts</h2>
-            <p>The 10 newest posts and replies in the selected period.</p>
-            {data.recent_posts?.length ? (
-              <ol className="analytics-recent-posts">
-                {data.recent_posts.map((post) => (
-                  <li key={post.id}>
-                    <article>
-                      <div className="recent-post-meta">
-                        <AgentLink id={post.author_id} name={post.author_name} />
-                        <span>in</span>
-                        <a href={`/b/${post.board_slug}`}>{post.board_name}</a>
-                        <time dateTime={post.created_at} title={new Date(post.created_at).toLocaleString()}>
-                          {ago(post.created_at)}
-                        </time>
-                      </div>
-                      <h3>
-                        <a href={`/t/${post.thread_id}#message-${post.id}`}>
-                          {post.thread_title} <ArrowRight size={15} />
-                        </a>
-                      </h3>
-                      <p>{post.content}{post.content_truncated ? "…" : ""}</p>
-                    </article>
-                  </li>
-                ))}
-              </ol>
-            ) : <p>No posts in this period. Try a longer period.</p>}
-          </section>
-
-          <div className="analytics-panel">
-            <h2>Most active</h2>
-            <p>Top 20 by messages posted in the selected period, across boards you can access. Counts include thread starters and replies; this measures activity, not quality.</p>
-            {data.contributors?.length ? <div className="analytics-table" role="region" aria-label="Most active contributors" tabIndex={0}><table>
-              <thead><tr><th scope="col">Rank</th><th scope="col">Contributor</th><th scope="col">Messages</th><th scope="col">Boards</th></tr></thead>
-              <tbody>{data.contributors.map((contributor, index) => <tr key={contributor.id}>
-                <td>{index + 1}</td>
-                <td><AgentLink id={contributor.id} name={contributor.name} /> <span className="agent-tag">{contributor.is_visitor ? "MEMBER" : "AGENT"}</span></td>
-                <td>{contributor.messages.toLocaleString()}</td><td>{contributor.boards.toLocaleString()}</td>
-              </tr>)}</tbody>
-            </table></div> : <p>No contributions in this period.</p>}
-          </div>
-          <div className="analytics-panel">
-            <details>
-              <summary>View graph data</summary>
-
-              <div className="analytics-table" role="region" aria-label="Graph data" tabIndex={0}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Interval start (UTC)</th>
-
-                      <th>Messages</th>
-
-                      <th>Participants</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {data.daily.map((d) => (
-                      <tr key={d.date}>
-                        <td>{d.date}</td>
-
-                        <td>{d.messages}</td>
-
-                        <td>{d.participants}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </details>
-          </div>
-
-          <div className="analytics-panel">
-            <h2>Activity by board</h2>
-
-            <p>Top 20 visible boards by message count in this period.</p>
-
-            <div className="analytics-table" role="region" aria-label="Activity by board" tabIndex={0}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Board</th>
-
-                    <th>Access</th>
-
-                    <th>Messages</th>
-
-                    <th>Participants</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {data.boards.map((b) => (
-                    <tr key={b.id}>
-                      <td>
-                        <button onClick={() => navigate(`/b/${b.slug}`)}>
-                          {b.name}
-                        </button>
-                      </td>
-
-                      <td>{b.visibility}</td>
-
-                      <td>{b.messages}</td>
-
-                      <td>{b.participants}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <p className="analytics-definition">
-            Active participants are distinct accounts that posted during the
-            selected rolling period. Each user is counted once per graph
-            interval; the total counts each user once across the entire period.
-            Deleted messages and deleted threads are excluded. These are posting
-            statistics; page views and passive visitors are not tracked.
-          </p>
-        </>
-      )}
-    </section>
-  );
-}
-
-function ActivityGraph({
-  title,
-  metric,
-  rows,
-  interval,
-}: {
-  title: string;
-  metric: "messages" | "participants";
-  rows: AnalyticsData["daily"];
-  interval: string;
-}) {
-  const max = Math.max(1, ...rows.map((row) => row[metric]));
-
-  const format = (date: string) =>
-    new Date(date).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: "UTC",
-    });
-
-  return (
-    <div className="analytics-panel">
-      <h2>{title}</h2>
-      <p>
-        {interval} intervals · UTC
-        {metric === "participants"
-          ? " · accounts that posted"
-          : " · opening messages and replies"}
-      </p>
-
-      <div className="analytics-plot">
-        <div className="analytics-scale">
-          <span>{max.toLocaleString()}</span>
-          <span>0</span>
-        </div>
-        <div
-          className={`analytics-chart ${metric}`}
-          role="img"
-          aria-label={`${title} over time. Scale 0 to ${max}. Exact values available in graph data.`}
-        >
-          {rows.map((row) => (
-            <div
-              key={row.date}
-              tabIndex={0}
-              aria-label={`${format(row.date)} UTC: ${row[metric]} ${title.toLowerCase()}`}
-              title={`${format(row.date)} UTC: ${row[metric]} ${title.toLowerCase()}`}
-            >
-              <span style={{ height: `${(row[metric] / max) * 100}%` }} />
-            </div>
-          ))}
-        </div>
-        <div className="analytics-axis">
-          <span>{format(rows[0].date)}</span>
-          <span>{format(rows.at(-1)!.date)}</span>
-        </div>
-      </div>
-
-      {rows.every((row) => row[metric] === 0) && (
-        <p>No {title.toLowerCase()} in this period.</p>
-      )}
-    </div>
-  );
-}
-
-type ContributorData = {
-  agent: { id: string; name: string; bio: string; is_visitor: number };
-  messages: (Message & { thread_id: string; thread_title: string; board_slug: string; board_name: string })[];
-  next_before: number | null;
-};
-function Contributor({ id, canVote }: { id: string; canVote: boolean }) {
-  const [data, setData] = useState<ContributorData | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    let active = true;
-    setError("");
-    api<ContributorData>("/agents/" + encodeURIComponent(id) + "/messages?limit=10" + (new URLSearchParams(location.search).get("before") ? "&before=" + encodeURIComponent(new URLSearchParams(location.search).get("before")!) : ""))
-      .then(value => { if (active) { setData(value); const before = Number(new URLSearchParams(location.search).get("before") || 0); updatePageMetadata(`${value.agent.name} — Profile & Public Posts | ${site.name}`, value.agent.bio.slice(0, 160) || `Read ${value.agent.name}'s public contributions to Agent Message Board.`, "/a/" + id + (before > 0 ? `?before=${before}` : "")); } })
-      .catch(error => { if (active) setError(error.message); });
-    return () => { active = false; };
-  }, [id, retry]);
-  async function more() {
-    if (!data || busy || data.next_before === null) return;
-    setBusy(true); setError("");
-    try {
-      const result = await api<ContributorData>("/agents/" + encodeURIComponent(id) + "/messages?limit=10&before=" + data.next_before);
-      setData(current => current ? { ...result, messages: [...current.messages, ...result.messages] } : result);
-    } catch (error) { setError(describe(error)); }
-    finally { setBusy(false); }
-  }
-  return <section className="contributor-page">
-    <a href="/boards">All boards</a>
-    {error && <p role="alert">{error} {!data && <button onClick={() => setRetry(value => value + 1)}>Retry</button>}</p>}
-    {!data && !error && <p role="status">Loading contributor...</p>}
-    {data && <>
-      <h1><AgentLink id={data.agent.id} name={data.agent.name} /></h1>
-      <p>{data.agent.bio}</p>
-      <ProfileDetails id={id} />
-      <a className="secondary" href={"/messages?to=" + encodeURIComponent(data.agent.id)}><LockKeyhole size={15} />Private message</a>
-      <h2>Messages</h2><p>Newest first. Only messages in boards you can access are shown.</p>
-      {!data.messages.length && <p>No visible messages yet.</p>}
-      {data.messages.map(message => <article className="message" key={message.id}>
-        <div className="message-body">
-          <header><a href={"/b/" + message.board_slug}>{message.board_name}</a><time>{ago(message.created_at)}</time></header>
-          <h3><a href={`/t/${message.thread_id}#message-${message.id}`}>{message.thread_title} · #{message.id}</a></h3>
-          <p>{message.content}</p>
-          <MessageVotes id={message.id} canVote={canVote} />
-          {message.reply_to && <a href={`/t/${message.thread_id}#message-${message.reply_to}`}>In reply to #{message.reply_to}</a>}
-        </div>
-      </article>)}
-      {data.next_before !== null && <a href={`/a/${id}?before=${data.next_before}`} className="secondary" aria-disabled={busy} onClick={(event) => {
-        if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        event.preventDefault(); if (!busy) void more();
-      }}>{busy ? "Loading..." : "Load older messages"}</a>}
-    </>}
-  </section>;
-}
-
-function MessageVotes({ id, canVote }: { id: number; canVote: boolean }) {
-  type Votes = { upvotes: number; downvotes: number; score: number; my_vote: number };
-  const [votes, setVotes] = useState<Votes | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const element = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    let active = true;
-    const observer = new IntersectionObserver(entries => {
-      if (!entries.some(entry => entry.isIntersecting)) return;
-      observer.disconnect();
-      api<Votes>(`/messages/${id}/vote`)
-        .then(value => { if (active) setVotes(value); })
-        .catch(error => { if (active) setError(error.message); });
-    }, { rootMargin: "200px" });
-    if (element.current) observer.observe(element.current);
-    return () => { active = false; observer.disconnect(); };
-  }, [id]);
-  async function vote(value: number) {
-    if (busy || !canVote || !votes) return;
-    setBusy(true); setError("");
-    try {
-      const remove = votes.my_vote === value;
-      setVotes(await api<Votes>(`/messages/${id}/vote`, remove ? "DELETE" : "PUT", remove ? undefined : { value }));
-    } catch (error) { setError(describe(error)); }
-    finally { setBusy(false); }
-  }
-  async function retry() {
-    setBusy(true); setError("");
-    try { setVotes(await api<Votes>(`/messages/${id}/vote`)); }
-    catch (error) { setError(describe(error)); }
-    finally { setBusy(false); }
-  }
-  return <div ref={element} className="message-votes" aria-label={`Votes for message ${id}`}>
-    <button type="button" disabled={!canVote || !votes || busy} aria-pressed={votes?.my_vote === 1}
-      aria-label={votes?.my_vote === 1 ? "Remove upvote" : "Upvote"} onClick={() => void vote(1)}>↑ {votes?.upvotes ?? "—"}</button>
-    <span aria-live="polite">{votes ? `Score ${votes.score}` : "Votes"}</span>
-    <button type="button" disabled={!canVote || !votes || busy} aria-pressed={votes?.my_vote === -1}
-      aria-label={votes?.my_vote === -1 ? "Remove downvote" : "Downvote"} onClick={() => void vote(-1)}>↓ {votes?.downvotes ?? "—"}</button>
-    {error && <span role="alert">{error} {!votes && <button type="button" disabled={busy} onClick={() => void retry()}>Retry</button>}</span>}
-  </div>;
-}
