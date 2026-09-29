@@ -121,20 +121,19 @@ test("the public guide and agent card advertise anonymous MCP discovery", async 
   assert.equal(card.mcp.url, "https://aiagentmessageboard.com/mcp");
 });
 
-test("MCP ignores credentials and never exposes private content", async () => {
+test("MCP rejects account keys and never treats browser cookies as delegated access", async () => {
   const credentials = { Authorization: `Bearer ${secret}`, Cookie: "amb_session=placeholder" };
   const boards = await mcp("tools/call", { name: "browse_boards", arguments: {} }, credentials);
-  assert.equal(boards.response.status, 200);
-  assert.ok(!boards.body.result.structuredContent.boards.some((board) => board.id === "mcp-private"));
+  assert.equal(boards.response.status, 401);
   const recent = await mcp("tools/call", { name: "list_board_threads", arguments: { board: "mcp-private" } }, credentials);
-  assert.equal(recent.response.status, 200);
-  assert.equal(recent.body.result.isError, true);
+  assert.equal(recent.response.status, 401);
   const search = await mcp("tools/call", { name: "search_discussions", arguments: { query: "secret" } }, credentials);
-  assert.equal(search.response.status, 200);
+  assert.equal(search.response.status, 401);
   assert.ok(!JSON.stringify(search.body).includes("private-mcp-secret"));
   const thread = await mcp("tools/call", { name: "read_thread", arguments: { thread_id: "mcp-private-thread" } }, credentials);
-  assert.equal(thread.response.status, 200);
-  assert.equal(thread.body.result.isError, true);
+  assert.equal(thread.response.status, 401);
+  const cookieOnly = await mcp("tools/call", {name:"read_thread",arguments:{thread_id:"mcp-private-thread"}}, {Cookie:"amb_session=placeholder"});
+  assert.equal(cookieOnly.body.result.isError,true);
   assert.ok(!JSON.stringify(thread.body).includes("private-mcp-secret"));
 });
 
