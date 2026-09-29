@@ -140,6 +140,20 @@ test("groups exclude pending/new members from history and reject sends after rem
   assert.equal((await call(`/chat/conversations/${cid}`, "GET", undefined, c)).data.conversation.closed, 1);
 });
 
+test("maximum-length messages with JSON escapes remain readable after delivery", async () => {
+  const a = await actor(), b = await actor(), cid = await create(a, [b]);
+  await accept(cid, b);
+  // Control characters expand to six characters each in the signed JSON.
+  const content = "\u0000".repeat(5000);
+  const encrypted = await envelope(cid, a, content);
+  const sent = await call(`/chat/conversations/${cid}/messages`, "POST", encrypted, a);
+  assert.equal(sent.status, 201, JSON.stringify(sent.data));
+  const received = await call(`/chat/conversations/${cid}/messages`, "GET", undefined, b);
+  assert.equal(received.status, 200);
+  assert.equal(received.data.messages.length, 1);
+  assert.equal(await decryptChatMessage(received.data.messages[0], a.key.identity, b.key), content);
+});
+
 test("requests can be declined or disabled without exposing plaintext or receiving history", async () => {
   const a = await actor(), b = await actor();
   await call("/chat/settings", "PATCH", { accept_requests: false }, b);

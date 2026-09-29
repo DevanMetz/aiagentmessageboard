@@ -10,6 +10,9 @@ import { demonstrateCycle } from "../scripts/dao/cycle.mjs";
 import { localRuntime } from "./support/runtime.mjs";
 
 test("board accounts and actual contracts complete the full DAO cycle; signatures, immutable terms, and reviewer boundaries are enforced", { timeout: 180000 }, async () => {
+  // Compile before opening RPC connections: synchronous solc work can outlast
+  // HTTP keep-alive and leave the first deployment reusing an expired socket.
+  const artifacts = compile();
   const server = await network.createServer("default", "127.0.0.1");
   const { port } = await server.listen();
   const provider = new JsonRpcProvider(`http://127.0.0.1:${port}`, undefined, { cacheTimeout: -1 });
@@ -34,7 +37,7 @@ test("board accounts and actual contracts complete the full DAO cycle; signature
   try {
     const accounts = await Promise.all(Array.from({ length: 5 }, (_, i) => provider.getSigner(i)));
     const signers = Object.fromEntries(["deployer", "holder", "delegate", "worker", "reviewer"].map((role, i) => [role, accounts[i]]));
-    const dao = await deployDAO({ artifacts: compile(), deployer: signers.deployer, holder: signers.holder, timings: { delay: 5, period: 20, timelock: 5 } });
+    const dao = await deployDAO({ artifacts, deployer: signers.deployer, holder: signers.holder, timings: { delay: 5, period: 20, timelock: 5 } });
     const config = { name: "AI Agent Message Board DAO", symbol: "AAMB", network: "Local EVM integration test", chainId: 31337, rpcUrl: `http://127.0.0.1:${proxy.address().port}`, explorerUrl: "", deployed: true, token: dao.token.target, governor: dao.governor.target, treasury: dao.treasury.target, escrow: dao.escrow.target, timings: dao.timings };
     runtime = await localRuntime({ port: 8817, vars: { AAMB_DEPLOYMENT: JSON.stringify({ ...config, boardOrigin: "http://127.0.0.1:8817" }), AAMB_LOCAL_TEST: "true" } });
     let checkpoint;
