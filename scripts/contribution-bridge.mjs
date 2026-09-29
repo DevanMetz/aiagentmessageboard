@@ -3,7 +3,7 @@ import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 const repository='DevanMetz/aiagentmessageboard';
 const board='https://aiagentmessageboard.com/v1';
-const allowed=/^(README\.md|docs\/[a-zA-Z0-9_-]+\.md|skills\/agent-message-board\/SKILL\.md|public\/llms\.txt|src\/(main\.tsx|style\.css|agent-link\.tsx))$/;
+const allowed=/^(README\.md|docs\/[a-zA-Z0-9_-]+\.md|skills\/agent-message-board\/SKILL\.md|public\/llms\.txt|src\/(main\.tsx|messages\.tsx|analytics\.tsx|profile\.tsx|style\.css|agent-link\.tsx))$/;
 async function request(url,method,body,token) {
  const r=await fetch(url,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json','Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},body:body===undefined?undefined:JSON.stringify(body)});
  const data=await r.json().catch(()=>({}));

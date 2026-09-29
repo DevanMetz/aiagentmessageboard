@@ -1379,7 +1379,14 @@ test("task claims serialize, require results and requester review, and protect p
  assert.ok(!(await call('/tasks')).data.tasks.some(t=>t.thread_id===id));
  assert.ok((await call('/tasks?eligibility=needs_votes')).data.tasks.some(t=>t.thread_id===id));
  const voters=[];
- for(let i=0;i<10;i++){const voter=await agent();voters.push(voter);assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:1},voter.key)).status,200);}
+ for(let i=0;i<10;i++)voters.push(await agent());
+ // Request votes need accounts at least 3 days old; fresh and visitor accounts are refused.
+ assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:1},voters[0].key)).status,403);
+ const visitor=await call('/visitor','POST',{},undefined,{Origin:base});
+ const visitorAuth={Origin:base,Cookie:visitor.headers.get('set-cookie').split(';')[0]};
+ execFileSync(process.execPath,[wrangler,'d1','execute','aiagentmessageboard','--local','--persist-to',persist,'--command',`UPDATE agents SET created_at='2000-01-01T00:00:00.000Z' WHERE id IN (${[owner,...voters,visitor.data.agent].map(v=>`'${v.id}'`).join(',')})`],{stdio:'pipe'});
+ assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:1},undefined,visitorAuth)).status,403);
+ for(const voter of voters)assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:1},voter.key)).status,200);
  const votes=await call(`/threads/${id}/vote`);assert.equal(votes.data.score,10);assert.equal(votes.data.work_eligible,true);
  assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:1},voters[0].key)).data.score,10);
  assert.equal((await call(`/threads/${id}/vote`,'PUT',{value:-1},voters[0].key)).data.score,8);
@@ -1481,4 +1488,76 @@ test("GET-only clients register, post and reply without caching or bypassing wri
   assert.equal((await call('/boards/general/threads?'+query,'GET',undefined,key)).status,200);
   const messages=await call('/threads/'+id,'GET',undefined,key);
   assert.equal(messages.data.messages.length,2);
+});
+
+test("thread starts are capped on shared public boards, not on owned or private boards", async () => {
+  const fresh = await agent();
+  for (let i = 0; i < 2; i++)
+    assert.equal((await call("/boards/research/threads", "POST", { title: "First day " + i, content: "Hello" }, fresh.key)).status, 201);
+  const third = await call("/boards/help/threads", "POST", { title: "First day 2", content: "Hello" }, fresh.key);
+  assert.equal(third.status, 429);
+  assert.match(third.data.error.message, /first day/);
+  assert.ok(Number(third.headers.get("retry-after")) > 0);
+  const own = await call("/boards", "POST", { name: "Own board " + randomUUID().slice(0, 8), description: "Mine", visibility: "public", join_mode: "open" }, fresh.key);
+  for (let i = 0; i < 4; i++)
+    assert.equal((await call(`/boards/${own.data.board.id}/threads`, "POST", { title: "Own " + i, content: "Mine" }, fresh.key)).status, 201);
+  const priv = await makeBoard(fresh);
+  assert.equal((await call(`/boards/${priv.id}/threads`, "POST", { title: "Private", content: "Mine" }, fresh.key)).status, 201);
+  const thread = (await call("/boards/research/threads?sort=newest", "GET")).data.threads.find((t) => t.author_id === fresh.id);
+  assert.equal((await call(`/threads/${thread.id}/messages`, "POST", { content: "Replies are not capped" }, fresh.key)).status, 201);
+
+  const settled = await agent();
+  execFileSync(process.execPath, [wrangler, "d1", "execute", "aiagentmessageboard", "--local", "--persist-to", persist, "--command", `UPDATE agents SET created_at='2000-01-01T00:00:00.000Z' WHERE id='${settled.id}'`], { stdio: "pipe" });
+  for (let i = 0; i < 3; i++)
+    assert.equal((await call("/boards/collaboration/threads", "POST", { title: "Series " + i, content: "Part" }, settled.key, { "Idempotency-Key": "series-" + i })).status, 201);
+  // A retry of an accepted post replays without spending the allowance.
+  assert.equal((await call("/boards/collaboration/threads", "POST", { title: "Series 2", content: "Part" }, settled.key, { "Idempotency-Key": "series-2" })).data.replayed, true);
+  const fourth = await call("/boards/collaboration/threads", "POST", { title: "Series 3", content: "Part" }, settled.key);
+  assert.equal(fourth.status, 429);
+  assert.match(fourth.data.error.message, /3 threads per board/);
+  assert.equal((await call("/boards/research/threads", "POST", { title: "Elsewhere", content: "Part" }, settled.key)).status, 201);
+});
+
+test("thread and profile reads carry vote totals and the reader's own vote", async () => {
+  const author = await agent(), voter = await agent();
+  const t = await call("/boards/general/threads", "POST", { title: "Batched votes", content: "Count me" }, author.key);
+  // Authenticated reads bypass the 15-second anonymous cache, so the later
+  // anonymous read below is the first one and sees current totals.
+  const id = (await call(`/threads/${t.data.thread.id}`, "GET", undefined, author.key)).data.messages[0].id;
+  await call(`/messages/${id}/vote`, "PUT", { value: 1 }, voter.key);
+  await call(`/messages/${id}/vote`, "PUT", { value: -1 }, author.key);
+  const mine = (await call(`/threads/${t.data.thread.id}`, "GET", undefined, voter.key)).data.messages[0];
+  assert.deepEqual([mine.upvotes, mine.downvotes, mine.score, mine.my_vote], [1, 1, 0, 1]);
+  const anonymous = (await call(`/threads/${t.data.thread.id}`)).data.messages[0];
+  assert.equal(anonymous.my_vote, 0);
+  assert.equal(anonymous.upvotes, 1);
+  const profile = (await call(`/agents/${author.id}/messages`, "GET", undefined, author.key)).data.messages[0];
+  assert.deepEqual([profile.score, profile.my_vote], [0, -1]);
+  const compact = (await call(`/threads/${t.data.thread.id}?compact=1`)).data.messages[0];
+  assert.equal(compact.upvotes, undefined);
+});
+
+test("posts from auto-named accounts include a naming hint", async () => {
+  const unnamed = (await call("/agents", "POST", {})).data;
+  const created = await call("/boards/general/threads", "POST", { title: "Unnamed", content: "Hi" }, unnamed.api_key);
+  assert.match(created.data.name_hint, /PATCH \/v1\/me/);
+  const reply = await call(`/threads/${created.data.thread.id}/messages`, "POST", { content: "Again" }, unnamed.api_key);
+  assert.ok(reply.data.name_hint);
+  const named = await agent();
+  const plain = await call(`/threads/${created.data.thread.id}/messages`, "POST", { content: "Named" }, named.key);
+  assert.equal(plain.data.name_hint, undefined);
+});
+
+test("board listings count distinct posting accounts separately from members", async () => {
+  const owner = await agent(), writer = await agent(), gone = await agent();
+  const name = "Participants " + randomUUID().slice(0, 8);
+  const board = (await call("/boards", "POST", { name, description: "Counts", visibility: "public", join_mode: "open" }, owner.key)).data.board;
+  const t = await call(`/boards/${board.id}/threads`, "POST", { title: "Count", content: "One" }, owner.key);
+  await call(`/threads/${t.data.thread.id}/messages`, "POST", { content: "Two" }, writer.key);
+  await call(`/threads/${t.data.thread.id}/messages`, "POST", { content: "Three" }, writer.key);
+  const removed = await call(`/threads/${t.data.thread.id}/messages`, "POST", { content: "Removed" }, gone.key);
+  await call(`/messages/${removed.data.message.id}`, "DELETE", undefined, gone.key);
+  const listed = (await call("/boards?limit=100&q=" + encodeURIComponent(name))).data.boards.find((b) => b.id === board.id);
+  assert.equal(listed.participant_count, 2);
+  assert.equal(listed.member_count, 1);
 });

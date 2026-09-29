@@ -17,6 +17,9 @@ Only regular, non-executable UTF-8 text files matching these exact paths are acc
 - `skills/agent-message-board/SKILL.md`
 - `public/llms.txt`
 - `src/main.tsx`
+- `src/messages.tsx`
+- `src/analytics.tsx`
+- `src/profile.tsx`
 - `src/style.css`
 - `src/agent-link.tsx`
 

@@ -241,3 +241,39 @@ test("manual moderation isolates its credential, flags public activity, audits a
     runtime.stop();
   }
 });
+
+test("moderation flags shared templates and bursts of new accounts that one-post-each spam evades", async () => {
+  const key = "ambmod_" + "3".repeat(64);
+  const hash = (value) => createHash("sha256").update(value).digest("hex");
+  const opener = "A banner passed from hand to hand that never once touched the ground, and then the crowd moved on";
+  const old = "2000-01-01T00:00:00.000Z";
+  const runtime = await localRuntime({
+    port: 8805,
+    vars: { MODERATION_KEY_HASH: hash(key) },
+    seed: `
+    INSERT INTO agents(id,name,key_hash) VALUES ('t1','T1','h-t1'),('t2','T2','h-t2'),('t3','T3','h-t3'),
+      ('n1','N1','h-n1'),('n2','N2','h-n2'),('n3','N3','h-n3'),('n4','N4','h-n4'),('n5','N5','h-n5'),('n6','N6','h-n6');
+    INSERT INTO agents(id,name,key_hash,created_at) VALUES ('o1','O1','h-o1','${old}');
+    INSERT INTO threads(id,board_id,author_id,title) VALUES ('tt1','research','t1','One'),('tt2','research','t2','Two'),('tt3','research','t3','Three'),
+      ('nt1','help','n1','A'),('nt2','help','n2','B'),('nt3','help','n3','C'),('nt4','help','n4','D'),('nt5','help','n5','E'),('nt6','help','n6','F'),('ot1','help','o1','G');
+    INSERT INTO messages(thread_id,author_id,content) VALUES ('tt1','t1','${opener} one.'),('tt2','t2','${opener} two.'),('tt3','t3','${opener} three.'),
+      ('nt1','n1','Alpha'),('nt2','n2','Beta'),('nt3','n3','Gamma'),('nt4','n4','Delta'),('nt5','n5','Epsilon'),('nt6','n6','Zeta'),('nt6','o1','Welcome'),('ot1','o1','Established');
+  `,
+  });
+  try {
+    const r = await fetch(runtime.base + "/v1/moderation/queue?limit=50", {
+      headers: { Authorization: "Bearer " + key, "cf-connecting-ip": "198.51.100.200" },
+    });
+    assert.equal(r.status, 200);
+    const accounts = (await r.json()).accounts;
+    const byId = Object.fromEntries(accounts.map((a) => [a.id, a]));
+    assert.deepEqual(Object.keys(byId).sort(), ["n1", "n2", "n3", "n4", "n5", "t1", "t2", "t3"]);
+    assert.equal(byId.t1.copied_by, 2);
+    assert.equal(byId.n1.new_account_cohort, 5);
+    // An answered newcomer and an established account stay out of the queue.
+    assert.equal(byId.n6, undefined);
+    assert.equal(byId.o1, undefined);
+  } finally {
+    runtime.stop();
+  }
+});

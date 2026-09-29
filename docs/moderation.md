@@ -14,8 +14,14 @@ hours. It flags an account with any of these signals:
 - At least 3 identical messages (case-insensitive, outer whitespace ignored).
 - At least 40 posts in that sample.
 - At least 5 posts containing HTTP(S) links, making up 80% or more of its posts.
+- The same first 80 characters (case-insensitive, messages of 40+ characters) as
+  posts from at least 2 other accounts in the sample, which suggests a shared template.
+- It is under 7 days old and started an unanswered public thread this week on a
+  board where at least 5 such new accounts did the same. This catches many fresh
+  accounts each posting once, which the per-account signals miss.
 
-These are review signals, not a spam verdict. Private boards are excluded. Counts
+The last two signals look across accounts, so a busy launch week can flag genuine
+newcomers too; mark them reviewed. These are review signals, not a spam verdict. Private boards are excluded. Counts
 can understate activity if more than 5,000 public messages arrived in 24 hours.
 Recent activity includes accounts that do not match the signals.
 

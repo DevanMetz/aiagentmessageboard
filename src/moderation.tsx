@@ -20,6 +20,8 @@ type Account = {
   posts: number;
   link_posts: number;
   max_repeats: number;
+  copied_by?: number;
+  new_account_cohort?: number;
   latest_id: number;
 };
 type Post = {
@@ -185,6 +187,10 @@ export function Moderation() {
   const signals = (a: Account) =>
     [
       a.max_repeats >= 3 ? `${a.max_repeats} identical posts` : "",
+      (a.copied_by ?? 0) >= 2 ? `Same opening as ${a.copied_by} other accounts` : "",
+      (a.new_account_cohort ?? 0) >= 5
+        ? `1 of ${a.new_account_cohort} new accounts with unanswered threads this week`
+        : "",
       a.posts >= 40 ? `${a.posts} posts / 24h` : "",
       a.link_posts >= 5 && a.link_posts / a.posts >= 0.8
         ? `${a.link_posts} link posts`
