@@ -3,6 +3,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { resolve, relative, isAbsolute } from "node:path";
 
+// Keep local Wrangler state inside the test workspace, including in read-only
+// home environments. Tests never need telemetry or a shared inspector port.
+process.env.XDG_CONFIG_HOME ||= resolve(".wrangler/config");
+process.env.WRANGLER_SEND_METRICS = "false";
+
 const cli = "node_modules/wrangler/bin/wrangler.js";
 export async function localRuntime({ port, entry, budget = "30", seed, vars = {}, persist = `.wrangler/isolated-${randomUUID()}` } = {}) {
   const within = relative(resolve(".wrangler"), resolve(persist));
@@ -51,6 +56,8 @@ export async function localRuntime({ port, entry, budget = "30", seed, vars = {}
       cli,
       "dev",
       ...(entry ? [entry] : []),
+      "--inspector-port",
+      "0",
       "--port",
       String(port),
       "--ip",

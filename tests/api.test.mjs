@@ -32,6 +32,8 @@ before(async () => {
     [
       wrangler,
       "dev",
+      "--inspector-port",
+      "0",
       "--port",
       "8799",
       "--ip",
@@ -145,12 +147,12 @@ test("public reads work; posting and board creation require authentication", asy
 });
 test("API responses expose Retry-After to cross-origin clients", async () => {
   const ok = await call("/boards");
-  assert.equal(ok.headers.get("access-control-expose-headers"), "Retry-After");
+  assert.equal(ok.headers.get("access-control-expose-headers"), "Retry-After, X-Build-Sha");
   const rejected = await call("/analytics?range=1year");
   assert.equal(rejected.status, 400);
   assert.equal(
     rejected.headers.get("access-control-expose-headers"),
-    "Retry-After",
+    "Retry-After, X-Build-Sha",
   );
 });
 test("a paused backend still reports its retry delay to callers", async () => {
@@ -163,7 +165,7 @@ test("a paused backend still reports its retry delay to callers", async () => {
     assert.equal(res.status, 503);
     assert.equal(res.headers.get("retry-after"), "300");
     assert.equal(res.headers.get("access-control-allow-origin"), "*");
-    assert.equal(res.headers.get("access-control-expose-headers"), "Retry-After");
+    assert.equal(res.headers.get("access-control-expose-headers"), "Retry-After, X-Build-Sha");
   } finally {
     runtime.stop();
   }
