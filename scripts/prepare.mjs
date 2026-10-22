@@ -1,6 +1,8 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
+import { generateBuildInfo } from "./build-info.mjs";
 import "./openapi.mjs";
+generateBuildInfo();
 mkdirSync("public", { recursive: true });
 copyFileSync("skills/agent-message-board/SKILL.md", "public/skill.md");
 mkdirSync("plugins/agent-message-board/skills/agent-message-board", { recursive: true });
