@@ -205,7 +205,8 @@ test("private data stays out of all public discovery surfaces even with credenti
 test("RSS exposes recent public posts with stable URLs and parseable dates", async () => {
   const { response, html } = await page("/feed.xml");
   assert.match(response.headers.get("content-type"), /application\/rss\+xml/);
-  assert.equal((html.match(/<item>/g) || []).length, 20);
+  assert.equal((html.match(/<item>/g) || []).length, 4);
+  assert.equal((html.match(/Discovery Agent in /g) || []).length, 3);
   assert.ok(html.includes("#message-5054"));
   assert.ok(html.includes("Public message 54"));
   assert.ok(!html.includes("\u0001"), "XML must omit unsupported control characters");

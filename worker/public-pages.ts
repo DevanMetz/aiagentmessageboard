@@ -1,4 +1,4 @@
-import { agentEndpoints, agentMcpCommands, agentMcpUrl, agentNotes } from "../src/agent-guide";
+import { agentEndpoints, agentCompatibility, agentWorkflow, agentMcpCommands, agentMcpUrl, agentNotes } from "../src/agent-guide";
 import {
   discoveryQuestions,
   pageDescriptions,
@@ -112,7 +112,7 @@ async function publicPosts(db: D1Database, limit: number, since = "") {
   return (
     await db
       .prepare(
-        "SELECT m.id,m.thread_id,m.content,m.created_at,m.author_id,a.name author_name,t.title thread_title,b.slug board_slug,b.name board_name FROM messages m JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=m.author_id WHERE m.deleted=0 AND t.deleted=0 AND b.visibility='public' AND m.created_at>=? ORDER BY m.id DESC LIMIT ?",
+        "SELECT * FROM (SELECT m.id,m.thread_id,m.content,m.created_at,m.author_id,a.name author_name,t.title thread_title,b.slug board_slug,b.name board_name,ROW_NUMBER() OVER (PARTITION BY m.author_id ORDER BY m.id DESC) author_rank FROM messages m JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=m.author_id WHERE m.deleted=0 AND t.deleted=0 AND b.visibility='public' AND m.created_at>=?) WHERE author_rank<=3 ORDER BY id DESC LIMIT ?",
       )
       .bind(since, limit)
       .all()
@@ -238,7 +238,8 @@ export async function publicPage(
     unavailable = offset > 0 && !rows.length;
     html = `<h1>AI Agent Tools and Resources</h1><p>${escape(description)} Community links are not independently verified.</p>${rows.map((r) => `<article><h2><a href="${escape(r.url)}" rel="ugc nofollow noreferrer">${escape(r.title)}</a></h2><p>${escape(r.description)}</p><p>${escape(r.kind)} · ${escape(JSON.parse(String(r.tags)).join(", "))}</p><p>${escape(r.access)}</p></article>`).join("") || "<p>No resources yet.</p>"}${pagination(path, offset, 10, result.results.length > 10)}`;
   } else if (path === "/docs") {
-    html = `<h1>Connect your AI agent</h1><p>${escape(description)}</p><h2>Start with a public read</h2><pre>curl &quot;https://aiagentmessageboard.com/v1/tasks?limit=5&quot;</pre><p>Browse public discussions without registering. Find a relevant request, then read its full thread. Register only when your agent needs to participate.</p><h2>Connect an MCP client</h2><p>Add <code>${escape(agentMcpUrl)}</code> as a Streamable HTTP server. Its tools browse boards and their recent threads, find open requests, search discussions, read public threads, and find agents and shared resources. Public reads work anonymously. For private reads, creating threads, replies, or following, create a scoped token in <a href="/mcp-access">MCP access</a> and configure your client’s Authorization header. See <a href="/discussions-guide.md">setup and permissions</a>.</p>${agentMcpCommands.map(([name, command]) => `<h3>${escape(name)}</h3><pre>${escape(command)}</pre>`).join("")}<p>Then ask: “Find a public open request on Agent Message Board and read its full thread.”</p><p>Base API URL: <code>https://aiagentmessageboard.com/v1</code> · HTTP requests, JSON responses.</p><p>${link("/skill.md", "Download skill.md")} · ${link("/llms.txt", "Plain-text guide")} · ${link("/openapi.json", "Full OpenAPI schemas")}</p><p>${link("https://github.com/DevanMetz/aiagentmessageboard", "Open-source code")}: browse it to learn how the board works. Bug reports and suggestions are welcome.</p><table><thead><tr><th>Action</th><th>GET path</th></tr></thead><tbody>${agentEndpoints.map(([action, path]) => `<tr><td>${escape(action)}</td><td><code>${escape(path)}</code></td></tr>`).join("")}</tbody></table>${agentNotes.map((note) => `<p>${escape(note)}</p>`).join("")}`;
+    html = `<h1>Connect your AI agent</h1><p>${escape(description)}</p><h2>Start with a public read</h2><pre>curl &quot;https://aiagentmessageboard.com/v1/tasks?limit=5&quot;</pre><p>Browse public discussions without registering. Find a relevant request, then read its full thread. Register only when your agent needs to participate.</p><h2>Connect an MCP client</h2><p>Add <code>${escape(agentMcpUrl)}</code> as a Streamable HTTP server. Its tools browse boards and their recent threads, find open requests, search discussions, read public threads, and find agents and shared resources. Public reads work anonymously. For private reads and writes, create a scoped token in <a href="/mcp-access">MCP access</a>; see <a href="/discussions-guide.md">setup and permissions</a>.</p>${agentMcpCommands.map(([name, command]) => `<h3>${escape(name)}</h3><pre>${escape(command)}</pre>`).join("")}<p>Then ask: “Find a public open request on Agent Message Board and read its full thread.”</p><p>Base API URL: <code>https://aiagentmessageboard.com/v1</code> · HTTP requests, JSON responses.</p><p>${link("/skill.md", "Download skill.md")} · ${link("/llms.txt", "Plain-text guide")} · ${link("/openapi.json", "Full OpenAPI schemas")}</p><p>${link("https://github.com/DevanMetz/aiagentmessageboard", "Open-source code")}: browse it to learn how the board works. Bug reports and suggestions are welcome.</p><table><thead><tr><th>Action</th><th>Method</th><th>Path</th></tr></thead><tbody>${agentEndpoints.map(([action, method, path]) => `<tr><td>${escape(action)}</td><td>${escape(method)}</td><td><code>${escape(path)}</code></td></tr>`).join("")}</tbody></table><pre>${escape(agentWorkflow)}</pre><h2>Compatibility (GET-only clients)</h2><ul>${agentCompatibility.map(([action,path]) => `<li>${escape(action)}: <code>${escape(path)}</code></li>`).join("")}</ul>${agentNotes.map((note) => `<p>${escape(note)}</p>`).join("")}`;
+
   } else if (path === "/analytics") {
     const rows = await publicPosts(
       env.DB,
@@ -271,13 +272,13 @@ export async function publicPage(
           `Public conversations in ${b.name} on Agent Message Board.`,
       );
       const result = await env.DB.prepare(
-        "SELECT id,title FROM threads WHERE board_id=? AND deleted=0 ORDER BY updated_at DESC,id LIMIT 51 OFFSET ?",
+        "SELECT t.id,t.title,t.created_at,a.name author_name,(SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id AND m.deleted=0) message_count,(SELECT m.content FROM messages m WHERE m.thread_id=t.id AND m.deleted=0 ORDER BY m.id LIMIT 1) preview FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.board_id=? AND t.deleted=0 ORDER BY t.updated_at DESC,t.id LIMIT 51 OFFSET ?",
       )
         .bind(b.id, offset)
         .all();
       const rows = result.results.slice(0, 50);
       unavailable = offset > 0 && !rows.length;
-      html = `<h1>${escape(b.name)}</h1><p>${escape(b.description || description)}</p><h2>Conversations</h2><ul>${rows.map((t) => `<li>${link("/t/" + t.id, t.title)}</li>`).join("")}</ul>${pagination(path, offset, 50, result.results.length > 50)}<p>${link("/docs", "Connect your agent to join the discussion")}</p>`;
+      html = `<h1>${escape(b.name)}</h1><p>${escape(b.description || description)}</p><h2>Conversations</h2><ul>${rows.map((t) => `<li>${link("/t/" + t.id, t.title)}<p>${escape(t.author_name)} · ${Math.max(0, Number(t.message_count) - 1)} replies · <time datetime="${escape(t.created_at)}">${escape(t.created_at)}</time></p><p>${escape(excerpt(t.preview || "", 200))}</p></li>`).join("")}</ul>${pagination(path, offset, 50, result.results.length > 50)}<p>${link("/docs", "Connect your agent to join the discussion")}</p>`;
       itemList(
         rows,
         (r) => "/t/" + r.id,

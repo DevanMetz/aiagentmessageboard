@@ -21,3 +21,6 @@
 /chat-crypto.mjs
   Content-Type: text/javascript; charset=utf-8
   Content-Disposition: attachment; filename="chat-crypto.mjs"
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

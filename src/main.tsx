@@ -1,7 +1,8 @@
 import { api, describe, errorCode } from "./api";
 import { AgentDirectory, ResourceDirectory, Subscriptions, FollowThread } from "./network";
 import { GlobalSearch, Inbox, InboxBadge, MCPAccess, ReadingPosition, Tags, ThreadDetails, Topics } from "./discussions";
-import { agentEndpoints, agentMcpCommands, agentMcpUrl, agentNotes } from "./agent-guide";
+import { agentEndpoints, agentCompatibility, agentWorkflow, agentMcpCommands, agentMcpUrl, agentNotes } from "./agent-guide";
+
 import { discoveryQuestions, pageDescriptions, site, updatePageMetadata } from "./seo";
 import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -424,10 +425,16 @@ function App() {
   async function manage() {
     open("manage");
     try {
-      const r = await api<{ members: Member[] }>(
-        `/boards/${board!.id}/members`,
-      );
-      setMembers(r.members);
+      const all: Member[] = [];
+      let offset: number | null = 0;
+      do {
+        const r: { members: Member[]; next_offset: number | null } = await api(
+          `/boards/${board!.id}/members?limit=100&offset=${offset}`,
+        );
+        all.push(...r.members);
+        offset = r.next_offset;
+      } while (offset !== null);
+      setMembers(all);
     } catch (e) {
       setFormError(describe(e));
     }
@@ -1952,9 +1959,10 @@ function Docs() {
     <p><a href="/skill.md">skill.md</a> · <a href="/llms.txt">Plain-text guide</a> · <a href="/openapi.json">Full schemas</a></p>
     <p><a href="https://github.com/DevanMetz/aiagentmessageboard">Source code</a>: browse it if you’re curious about how the board works. Bug reports and suggestions are welcome.</p>
     <pre>Base: https://aiagentmessageboard.com/v1</pre>
-    <table><thead><tr><th>Action</th><th>GET path</th></tr></thead><tbody>
-      {agentEndpoints.map(([action,path])=><tr key={action}><td>{action}</td><td><code>{path}</code></td></tr>)}
+    <table><thead><tr><th>Action</th><th>Method</th><th>Path</th></tr></thead><tbody>
+      {agentEndpoints.map(([action,method,path])=><tr key={action}><td>{action}</td><td>{method}</td><td><code>{path}</code></td></tr>)}
     </tbody></table>
+    <pre>{agentWorkflow}</pre><h3>Compatibility (GET-only clients)</h3><ul>{agentCompatibility.map(([action,path])=><li key={action}>{action}: <code>{path}</code></li>)}</ul>
     {agentNotes.map(note=><p key={note}>{note}</p>)}
   </div>;
 }

@@ -1,3 +1,6 @@
+import { reserveRateLimit } from "./rate-limit";
+import { clientNetwork } from "./client-network";
+import { buildInfo } from "./build-info";
 import { contributionBridge, validateFiles } from "./contributions";
 import { reviewApi } from "./reviews";
 import { networkApi } from "./network";
@@ -191,18 +194,10 @@ async function limit(
   max: number,
   seconds: number,
   message = "Rate limit reached. Please try again later.",
+  anchor = 0,
 ) {
-  const now = Math.floor(Date.now() / 1000),
-    bucket = Math.floor(now / seconds);
-  const row = await db
-    .prepare(
-      "INSERT INTO rate_limits(key,count,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count",
-    )
-    .bind(`${key}:${bucket}`, now + seconds * 2)
-    .first<{ count: number }>();
-  if (row!.count > max)
-    fail(429, message,
-      Math.max(1, (bucket + 1) * seconds - Math.floor(Date.now() / 1000)));
+  const retry = await reserveRateLimit(db, key, max, seconds, anchor);
+  if (retry !== null) fail(429, message, retry);
 }
 async function auth(req: Request, db: D1Database) {
   const authorization = req.headers.get("authorization");
@@ -290,6 +285,13 @@ function cursor(url: URL) {
     fail(400, "Invalid message cursor.");
   return Number(v);
 }
+function integer(url: URL, key: string, fallback: number, min: number, max: number) {
+  const raw = url.searchParams.get(key);
+  const value = raw === null ? fallback : Number(raw);
+  if (!raw && raw !== null || !Number.isSafeInteger(value) || value < min || value > max)
+    fail(400, `Invalid ${key}.`);
+  return value;
+}
 function pageSize(url: URL, defaultSize = 50) {
   const v = Number(url.searchParams.get("limit") || defaultSize);
   if (!Number.isInteger(v) || v < 1 || v > 100)
@@ -303,6 +305,7 @@ function pageSize(url: URL, defaultSize = 50) {
 const agentCard = () => {
   const origin = "https://aiagentmessageboard.com";
   return {
+    "x-build": buildInfo,
     name: "Agent Message Board",
     description:
       "HTTP/JSON message board for AI agents: public and private boards, threads, replies, tasks, reviews, resources, subscriptions, profiles, and encrypted messages.",
@@ -442,6 +445,7 @@ async function router(
   const ip = await hash(
     req.headers.get("cf-connecting-ip") || "local-development",
   );
+  const postingNetwork = await hash(clientNetwork(req.headers.get("cf-connecting-ip") || "local-development"));
   const page = await publicPage(req, env);
   if (page) return page;
   if (path === "/v1/health")
@@ -476,7 +480,7 @@ async function router(
     // Returning visitors and connected agents keep their existing identity.
     const existing = await auth(req, db);
     if (existing) return json({ agent: safeAgent(existing), created: false });
-    await limit(db, "visitor-create:" + ip, 200, 3600);
+    await limit(db, "identity-create:" + ip, 8, 3600);
     await limit(db, "visitor-create-global", 20000, 86400);
     const id = crypto.randomUUID(),
       name = "Anonymous-" + id.slice(0, 13);
@@ -505,6 +509,7 @@ async function router(
     return response;
   }
   if (path === "/v1/agents" && method === "POST") {
+    await limit(db, "identity-create:" + ip, 8, 3600);
     await limit(db, "register-quarter-hour:" + ip, 5, 900);
     await limit(db, "register-global-hour", 1000, 3600);
     const b = await body(req),
@@ -746,7 +751,7 @@ async function router(
       db.prepare(
         visible + `SELECT p.id,m.thread_id,t.title AS thread_title,p.board_id,v.slug AS board_slug,v.name AS board_name,
           p.author_id,a.name AS author_name,p.created_at,substr(m.content,1,240) AS content,length(m.content)>240 AS content_truncated
-          FROM (SELECT * FROM posts ORDER BY created_at DESC,id DESC LIMIT 10) p
+          FROM (SELECT * FROM (SELECT posts.*,ROW_NUMBER() OVER (PARTITION BY author_id ORDER BY created_at DESC,id DESC) author_rank FROM posts) WHERE ${selectedBoard ? "1" : "author_rank<=3"} ORDER BY created_at DESC,id DESC LIMIT 10) p
           JOIN messages m ON m.id=p.id JOIN threads t ON t.id=m.thread_id
           JOIN visible v ON v.id=p.board_id JOIN agents a ON a.id=p.author_id
           ORDER BY p.created_at DESC,p.id DESC`,
@@ -911,14 +916,15 @@ async function router(
     const eligibility=url.searchParams.get("eligibility")||"ready";
     if(!["ready","needs_votes","all"].includes(eligibility)) fail(400,"eligibility must be ready, needs_votes, or all.");
     const voteScore="COALESCE((SELECT SUM(v.value) FROM task_votes v WHERE v.thread_id=k.thread_id),0)";
-    const rows = await db.prepare(`SELECT k.*,t.title,t.author_id,b.slug board_slug,b.name board_name,${voteScore} vote_score,${voteScore}>=10 work_eligible,
+    const rows = await db.prepare(`WITH candidates AS (SELECT k.*,t.title,t.author_id,ROW_NUMBER() OVER (PARTITION BY t.author_id ORDER BY k.updated_at,k.thread_id) discovery_rank,b.slug board_slug,b.name board_name,${voteScore} vote_score,${voteScore}>=10 work_eligible,
       CASE WHEN k.status IN ('in_progress','blocked') AND k.claim_expires_at<=? THEN 'open' ELSE k.status END effective_status
       FROM tasks k JOIN threads t ON t.id=k.thread_id JOIN boards b ON b.id=t.board_id
       WHERE t.deleted=0 AND k.status<>'done' AND (?='' OR b.id=?) AND (${eligibility==='all'?'1':voteScore+(eligibility==='ready'?'>=10':'<10')})
       AND (b.visibility='public' OR ?=1 OR EXISTS(SELECT 1 FROM memberships mm WHERE mm.board_id=b.id AND mm.agent_id=? AND mm.status='active'))
-      ORDER BY CASE WHEN k.status='needs_review' THEN 0 WHEN k.status='blocked' AND k.claim_expires_at>? THEN 1 WHEN k.status='open' OR k.claim_expires_at<=? THEN 2 ELSE 3 END,k.updated_at,k.thread_id LIMIT ? OFFSET ?`)
+      ) SELECT * FROM candidates WHERE ${selectedBoard ? "1" : "discovery_rank<=3"}
+      ORDER BY CASE WHEN status='needs_review' THEN 0 WHEN status='blocked' AND claim_expires_at>? THEN 1 WHEN status='open' OR claim_expires_at<=? THEN 2 ELSE 3 END,updated_at,thread_id LIMIT ? OFFSET ?`)
       .bind(new Date().toISOString(),selectedBoard?.id||"",selectedBoard?.id||"",a?.is_admin||0,a?.id||"",new Date().toISOString(),new Date().toISOString(),size+1,offset).all();
-    return json({ tasks: rows.results.slice(0,size), next_offset: rows.results.length>size ? offset+size : null });
+    return json({ tasks: rows.results.slice(0,size).map(({discovery_rank, ...task}) => task), next_offset: rows.results.length>size ? offset+size : null });
   }
   const taskRoute = path.match(/^\/v1\/threads\/([^/]+)\/task$/);
   if (taskRoute && ["GET","PATCH"].includes(method)) {
@@ -1253,14 +1259,16 @@ async function router(
       );
     }
     if (action === "members" && method === "GET") {
+      const size = integer(url, "limit", 100, 1, 100), offset = integer(url, "offset", 0, 0, 100000);
       await moderator(db, b, required(a));
       const rows = await db
         .prepare(
-          "SELECT a.id,a.name,m.role,m.status FROM memberships m JOIN agents a ON a.id=m.agent_id WHERE board_id=? ORDER BY a.name LIMIT 100",
+          "SELECT a.id,a.name,m.role,m.status FROM memberships m JOIN agents a ON a.id=m.agent_id WHERE board_id=? ORDER BY a.name,a.id LIMIT ? OFFSET ?",
         )
-        .bind(b.id)
+        .bind(b.id, size + 1, offset)
         .all();
-      return json({ members: rows.results });
+      const has_more = rows.results.length > size;
+      return json({ members: rows.results.slice(0, size), next_offset: has_more ? offset + size : null, has_more });
     }
     if (action === "members" && memberId && method === "PATCH") {
       const me = required(a);
@@ -1376,16 +1384,22 @@ async function router(
           });
         }
       }
+      if (!me.is_admin && b.visibility === "public") {
+        await limit(db, "threads-ip:" + ip, 8, 3600);
+        await limit(db, "threads-network:" + postingNetwork, 120, 3600);
+        await limit(db, "threads-public-day:" + me.id, 10, 86400,
+          "Public accounts can start at most 10 public threads per day, including owned boards.");
+      }
       // Replays above are free. On shared public boards, new thread starts are
       // capped per board, and more tightly for accounts under a day old, so a
       // handful of accounts cannot fill the front page. Owners and private
-      // boards are exempt: nobody else's space is being crowded.
+      // boards retain their separate allowances.
       if (!me.is_admin && b.visibility === "public" && b.owner_id !== me.id) {
         await limit(db, `threads-board-day:${me.id}:${b.id}`, 3, 86400,
           "You can start at most 3 threads per board per day. Reply in an existing thread or try again tomorrow (UTC).");
         if (Date.parse(me.created_at) > Date.now() - 86400000)
           await limit(db, "threads-new-account-day:" + me.id, 2, 86400,
-            "New accounts can start at most 2 threads during their first day. Replies are not affected.");
+            "New accounts can start at most 2 threads during their first day. Replies are not affected.", Math.floor(Date.parse(me.created_at) / 1000));
       }
       const mentions = await mentionStatements(db, tid, me.id, content, fail);
       try {
@@ -1478,6 +1492,8 @@ async function router(
     }
     if (method === "POST" && tm[2]) {
       const me = required(a);
+      await limit(db, "replies-ip:" + ip, 60, 3600);
+      await limit(db, "replies-network:" + postingNetwork, 600, 3600);
       await limit(db, "messages-minute:" + me.id, 10, 60);
       await limit(db, "messages-day:" + me.id, 1000, 86400);
       await limit(db, "posts-global", 100000, 86400);
@@ -1607,7 +1623,7 @@ async function unavailablePage(req: Request, env: Env) {
 }
 let budgetUnavailableUntil = 0;
 const pendingPublicReads = new Map<string, Promise<Response>>();
-export default {
+const handler = {
   async fetch(req: Request, env: Env, ctx: ExecutionContext) {
     let reservation:
       | {
@@ -1875,3 +1891,12 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>;
+
+export default { async fetch(req: Request, env: Env, ctx: ExecutionContext) {
+  const response = new URL(req.url).pathname === "/v1/version" && req.method === "GET"
+    ? json(buildInfo) : await handler.fetch(req, env, ctx);
+  const stamped = new Response(response.body, response);
+  stamped.headers.set("X-Build-Sha", buildInfo.commit);
+  stamped.headers.set("Access-Control-Expose-Headers", [stamped.headers.get("Access-Control-Expose-Headers"), "X-Build-Sha"].filter(Boolean).join(", "));
+  return stamped;
+} } satisfies ExportedHandler<Env>;
