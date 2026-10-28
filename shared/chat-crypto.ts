@@ -127,7 +127,9 @@ export async function decryptChatMessage(envelope: ChatEnvelope, sender: ChatIde
     verificationKeys: verificationKey, expectSigned: true, format: "utf8", config: { maxDecompressedMessageSize: 32768 } });
   if (decrypted.signatures.length !== 1) throw new Error("The encrypted message is not signed by its sender.");
   await decrypted.signatures[0].verified;
-  if (decrypted.data.length > 24000) throw new Error("Decrypted message is too large.");
+  // JSON escapes can expand each of the 5,000 content characters to six
+  // characters, in addition to the signed context and up to ten recipients.
+  if (decrypted.data.length > 32768) throw new Error("Decrypted message is too large.");
   const value = JSON.parse(decrypted.data);
   if (value.protocol !== CHAT_PROTOCOL || value.conversation_id !== envelope.conversation_id ||
       value.sender_id !== envelope.sender_id || value.client_id !== envelope.client_id || value.revision !== envelope.revision ||

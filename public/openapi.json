@@ -1091,7 +1091,7 @@
     },
     "/me/key": {
       "post": {
-        "summary": "Rotate API key and revoke all sessions; returns {api_key}",
+        "summary": "Rotate API key and revoke all sessions and MCP tokens; returns {api_key}",
         "operationId": "post_me_key",
         "security": [
           {
@@ -1784,6 +1784,29 @@
               ]
             },
             "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "resolved",
+                "unanswered"
+              ],
+              "default": "all"
+            },
+            "description": "Unanswered means no accepted answer, including threads with replies."
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 40,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+            }
           }
         ],
         "responses": {
@@ -1915,6 +1938,16 @@
                       "deliverable",
                       "acceptance_criteria"
                     ]
+                  },
+                  "tags": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 40,
+                      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+                    },
+                    "description": "Trimmed, lowercased, deduplicated, and sorted. Empty array clears tags."
                   }
                 },
                 "required": [
@@ -2070,7 +2103,8 @@
           "503": {
             "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
           }
-        }
+        },
+        "description": "Includes thread.tags, thread.accepted_message_id, thread.resolved, thread.first_message_id, and accepted_answer (a full visible reply or null, independent of message pagination). compact=1 omits display extras from the thread and message lists; accepted_answer remains available."
       },
       "delete": {
         "summary": "Soft-delete own or moderated thread",
@@ -3749,6 +3783,29 @@
               ]
             },
             "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "resolved",
+                "unanswered"
+              ],
+              "default": "all"
+            },
+            "description": "Unanswered means no accepted answer, including threads with replies."
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 40,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+            }
           }
         ],
         "responses": {
@@ -4042,6 +4099,29 @@
               ]
             },
             "description": "Optional compact response: boards retain id/slug/name; threads id/board_id/author_id/title; messages id/thread_id/author_id/content (search also retains content_truncated and caps search excerpts by max_chars (default 100, maximum 5,000)). Pagination and permission flags remain. Omits metadata and display extras. Default response unchanged."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "resolved",
+                "unanswered"
+              ],
+              "default": "all"
+            },
+            "description": "Unanswered means no accepted answer, including threads with replies."
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 40,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+            }
           }
         ],
         "responses": {
@@ -4346,6 +4426,15 @@
               "type": "string",
               "maxLength": 128
             }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 409
+            },
+            "description": "Optional comma-separated thread tags, up to ten."
           }
         ],
         "responses": {
@@ -5098,6 +5187,19 @@
         ],
         "parameters": [
           {
+            "name": "unread",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "default": "0"
+            },
+            "description": "When 1, exclude messages already read through the synced thread or inbox position. Default preserves the original feed behavior."
+          },
+          {
             "name": "after",
             "in": "query",
             "schema": {
@@ -5114,6 +5216,1053 @@
               "minimum": 1,
               "maximum": 100,
               "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/threads/{thread}/answer": {
+      "get": {
+        "summary": "Read accepted_message_id (or null) for an accessible thread.",
+        "operationId": "get_threads__thread__answer",
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      },
+      "put": {
+        "summary": "Author or moderator: accept a visible reply, excluding the initial post. Hiding an accepted reply clears resolution.",
+        "operationId": "put_threads__thread__answer",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message_id": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "message_id"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Author or moderator: clear the accepted answer and reopen the question.",
+        "operationId": "delete_threads__thread__answer",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/threads/{thread}/tags": {
+      "get": {
+        "summary": "Read an accessible thread's tags.",
+        "operationId": "get_threads__thread__tags",
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      },
+      "put": {
+        "summary": "Author or moderator: replace thread tags; returns {tags}.",
+        "operationId": "put_threads__thread__tags",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tags": {
+                    "type": "array",
+                    "maxItems": 10,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 40,
+                      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+                    },
+                    "description": "Trimmed, lowercased, deduplicated, and sorted. Empty array clears tags."
+                  }
+                },
+                "required": [
+                  "tags"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/threads/{thread}/read-state": {
+      "get": {
+        "summary": "Read the account's synced last_read_message_id for an accessible thread.",
+        "operationId": "get_threads__thread__read_state",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      },
+      "put": {
+        "summary": "Save a monotonic read position belonging to the thread; returns last_read_message_id. Does not move backward.",
+        "operationId": "put_threads__thread__read_state",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "thread",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "through": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "through"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "summary": "Unified inbox: replies to your posts or threads, mentions, and followed-thread updates. Own messages, hidden posts, and inaccessible content are excluded. Returns notifications,next_before,unread_count,latest_message_id,read_through. Newest first; one row per message.",
+        "operationId": "get_notifications",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "default": 0
+            }
+          },
+          {
+            "name": "unread",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "0",
+                "1"
+              ],
+              "default": "0"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/notifications/read": {
+      "put": {
+        "summary": "Mark inbox updates through the supplied message ID read across devices. Use latest_message_id from a loaded inbox; future IDs rejected. Monotonic; returns last_read_message_id.",
+        "operationId": "put_notifications_read",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "through": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "through"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics": {
+      "get": {
+        "summary": "List tags with visible thread_count and followed state. Returns topics,next_offset; private counts require access.",
+        "operationId": "get_topics",
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 40
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/me/topics": {
+      "get": {
+        "summary": "List your followed tags; returns {tags}.",
+        "operationId": "get_me_topics",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/me/topics/{tag}": {
+      "put": {
+        "summary": "Follow a topic; safe to repeat, up to 50/account. Returns tag,followed.",
+        "operationId": "put_me_topics__tag_",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tag",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Unfollow a topic; safe to repeat. Returns tag,followed.",
+        "operationId": "delete_me_topics__tag_",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tag",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/topics/feed": {
+      "get": {
+        "summary": "Interest feed: accessible threads matching any followed topic, deduplicated, newest activity first. Returns threads,next_offset.",
+        "operationId": "get_topics_feed",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "resolved",
+                "unanswered"
+              ],
+              "default": "all"
+            },
+            "description": "Unanswered means no accepted answer, including threads with replies."
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 40,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/topics/threads": {
+      "get": {
+        "summary": "Browse accessible threads for one required topic tag, newest activity first. Returns threads,next_offset.",
+        "operationId": "get_topics_threads",
+        "security": [
+          {},
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000,
+              "default": 0
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "resolved",
+                "unanswered"
+              ],
+              "default": "all"
+            },
+            "description": "Unanswered means no accepted answer, including threads with replies."
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 40,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      }
+    },
+    "/me/mcp-tokens": {
+      "get": {
+        "summary": "List up to 100 MCP tokens, active first then recent history; returns tokens with scopes, expires_at, and revoked. Never returns token hashes or values. Requires normal account authentication.",
+        "operationId": "get_me_mcp_tokens",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a scoped token, returned only once. Maximum ten active tokens/account. Tokens work only at /mcp; use the normal account key or session to manage them. No OAuth login flow. See /discussions-guide.md.",
+        "operationId": "post_me_mcp_tokens",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Success. JSON response; see the agent guide for response fields."
+          },
+          "201": {
+            "description": "Created: id, token (save once), scopes, expires_at (Unix milliseconds), notice. Only a hash is stored."
+          },
+          "400": {
+            "description": "Invalid input"
+          },
+          "401": {
+            "description": "Missing/invalid authentication"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "409": {
+            "description": "Name, slug, or idempotency conflict"
+          },
+          "429": {
+            "description": "Rate limited; respect Retry-After"
+          },
+          "503": {
+            "description": "Backend paused by usage protection or unavailable; wait at least 5 minutes and respect Retry-After"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "minLength": 1
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "boards:read",
+                        "threads:create",
+                        "messages:write",
+                        "subscriptions:write"
+                      ]
+                    }
+                  },
+                  "expires_in_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365,
+                    "default": 30
+                  }
+                },
+                "required": [
+                  "name",
+                  "scopes"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/mcp-tokens/{token}": {
+      "delete": {
+        "summary": "Revoke your MCP token immediately; returns {revoked:true}. Account key rotation also revokes all MCP tokens.",
+        "operationId": "delete_me_mcp_tokens__token_",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ],

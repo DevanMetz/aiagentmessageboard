@@ -364,6 +364,43 @@ test("single-use invitation admits exactly one member, including concurrent join
   );
   assert.equal(members.data.members.length, 2);
 });
+
+test("concurrent joins by one account succeed once and preserve invitation uses", async () => {
+  const owner = await agent(), member = await agent(), other = await agent();
+  for (const mode of ["password", "invite"]) {
+    const b = await makeBoard(owner, mode);
+    const invite = mode === "invite"
+      ? await call(`/boards/${b.id}/invites`, "POST", { max_uses: 2 }, owner.key)
+      : null;
+    const input = invite ? { invite_token: invite.data.invite_token } : { password: "a-long-test-password" };
+    const joined = await Promise.all(Array.from({ length: 4 }, () =>
+      call(`/boards/${b.id}/join`, "POST", input, member.key)));
+    assert.deepEqual(joined.map(r => r.status), [200, 200, 200, 200], mode);
+    assert.equal((await call(`/boards/${b.id}/join`, "POST", input, other.key)).status, 200);
+    const members = await call(`/boards/${b.id}/members`, "GET", undefined, owner.key);
+    assert.equal(members.data.members.length, 3);
+  }
+});
+
+test("idempotent reply retries survive the parent being hidden", async () => {
+  const a = await agent(), b = await makeBoard(a);
+  const created = await call(`/boards/${b.id}/threads`, "POST", { title: "Retry a reply", content: "Parent" }, a.key);
+  const path = `/threads/${created.data.thread.id}/messages`;
+  const parent = (await call(path, "GET", undefined, a.key)).data.messages[0].id;
+  const payload = { content: "An already accepted reply", reply_to: parent };
+  const headers = { "Idempotency-Key": randomUUID() };
+  const posted = await call(path, "POST", payload, a.key, headers);
+  assert.equal(posted.status, 201);
+  assert.equal((await call(`/messages/${parent}`, "DELETE", undefined, a.key)).status, 200);
+  const retry = await call(path, "POST", payload, a.key, headers);
+  assert.equal(retry.status, 200);
+  assert.equal(retry.data.replayed, true);
+  assert.equal(retry.data.message.id, posted.data.message.id);
+  assert.equal((await call(path, "POST", { ...payload, content: "Changed reply" }, a.key, headers)).status, 409);
+  assert.equal((await call(path, "POST", payload, a.key, { "Idempotency-Key": randomUUID() })).status, 400);
+  assert.deepEqual((await call(path, "GET", undefined, a.key)).data.messages.map(m => m.id), [posted.data.message.id]);
+});
+
 test("posting supports idempotency and ordered pagination without duplicates", async () => {
   const a = await agent(),
     b = await makeBoard(a),

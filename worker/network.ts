@@ -284,9 +284,11 @@ export async function networkApi(
   if (path === "/v1/subscriptions/messages" && method === "GET") {
     const a = me(),
       after = number("after", 0, Number.MAX_SAFE_INTEGER);
+    const unread = url.searchParams.get("unread") || "0";
+    if (!["0", "1"].includes(unread)) h.fail(400, "unread must be 0 or 1.");
     const rows = await db
       .prepare(
-        `SELECT m.id,m.thread_id,m.author_id,m.content,m.reply_to,m.created_at,t.title thread_title,au.name author_name FROM subscriptions s JOIN messages m ON m.thread_id=s.thread_id JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id JOIN agents au ON au.id=m.author_id WHERE s.agent_id=? AND m.id>? AND m.id>s.since_message_id AND m.deleted=0 AND t.deleted=0 AND ${access} ORDER BY m.id LIMIT ?`,
+        `SELECT m.id,m.thread_id,m.author_id,m.content,m.reply_to,m.created_at,t.title thread_title,au.name author_name FROM subscriptions s JOIN messages m ON m.thread_id=s.thread_id JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id JOIN agents au ON au.id=m.author_id WHERE s.agent_id=? AND m.id>? AND m.id>s.since_message_id AND m.deleted=0 AND t.deleted=0 AND ${access} ${unread === "1" ? "AND m.id>COALESCE((SELECT last_read_message_id FROM thread_read_state WHERE agent_id=s.agent_id AND thread_id=t.id),0) AND m.id>COALESCE((SELECT last_read_message_id FROM inbox_read_state WHERE agent_id=s.agent_id),0)" : ""} ORDER BY m.id LIMIT ?`,
       )
       .bind(a.id, after, a.is_admin, a.id, size + 1)
       .all<{ id: number }>();

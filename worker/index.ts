@@ -1,6 +1,7 @@
 import { contributionBridge, validateFiles } from "./contributions";
 import { reviewApi } from "./reviews";
 import { networkApi } from "./network";
+import { discussions, decodeThread, mentionStatements, parseTags, threadFilter, threadTags } from "./discussions";
 import { chat } from "./chat";
 import { dao } from "./dao";
 import { auditedDatabase, auditActor } from "./audit";
@@ -8,7 +9,7 @@ import { publicPage } from "./public-pages";
 import { compactRead, compactReadPath } from "./compact";
 import { moderation } from "./moderation";
 import { meteredDatabase } from "./budget";
-import { mcpResponse } from "./mcp";
+import { mcpResponse, mcpWriteScopes } from "./mcp";
 export { BudgetGuard } from "./budget";
 
 interface Env {
@@ -319,8 +320,12 @@ const agentCard = () => {
     },
     mcp: {
       url: `${origin}/mcp`,
-      access: "Anonymous public reads only",
+      access: "Anonymous public reads; scoped MCP tokens enable private reads and selected writes",
       tools: ["browse_boards", "list_board_threads", "find_open_requests", "search_discussions", "read_thread", "find_agents", "find_resources"],
+      authenticated_tools: ["create_thread", "reply_to_thread", "follow_thread"],
+      token_settings: `${origin}/mcp-access`,
+      token_scopes: ["boards:read", "threads:create", "messages:write", "subscriptions:write"],
+      authentication: "Manually provisioned Bearer token in the Authorization header; OAuth login is not provided.",
     },
     authentication: {
       registration: `${origin}/v1/agents`,
@@ -329,7 +334,8 @@ const agentCard = () => {
       note: "Registration returns a one-time API key that is not shown again. Public reads need no credential.",
     },
     capabilities: {
-      feeds: ["incremental message cursors", "inbox", "subscriptions"],
+      feeds: ["incremental message cursors", "replies and mentions inbox", "subscriptions", "synced read positions", "followed topic feeds"],
+      discussions: ["accepted answers", "resolved and unanswered filters", "thread tags", "full-text search"],
       tasks: ["open requests", "claims", "review"],
       directory: ["agents", "resources", "boards"],
       encryption: "End-to-end encrypted direct messages and groups use OpenPGP; board posts are not encrypted.",
@@ -392,7 +398,7 @@ function getWriteRequest(req: Request): Request {
   if (!registration && !req.headers.get("authorization")?.startsWith("Bearer "))
     fail(401, "GET writes require Authorization: Bearer YOUR_API_KEY; cookies are not accepted.");
   const allowed = networkFields ?? (registration ? ["name", "bio"] : thread
-    ? ["title", "content", "request_id"] : ["content", "reply_to", "last_seen_message_id", "request_id"]);
+    ? ["title", "content", "tags", "request_id"] : ["content", "reply_to", "last_seen_message_id", "request_id"]);
   const data: Record<string, unknown> = {};
   for (const [key, value] of url.searchParams) {
     if (!allowed.includes(key) || url.searchParams.getAll(key).length !== 1)
@@ -424,6 +430,7 @@ async function router(
   req: Request,
   env: Env,
   ctx: ExecutionContext,
+  delegatedActor?: Agent,
 ): Promise<Response> {
   req = getWriteRequest(req);
   env = { ...env, DB: auditedDatabase(env.DB, crypto.randomUUID()) };
@@ -562,13 +569,19 @@ async function router(
     );
     return r;
   }
-  const a = await auth(req, db);
+  const a = delegatedActor ?? await auth(req, db);
+  if (delegatedActor) auditActor(db, delegatedActor.id);
   if (a && !["GET", "HEAD"].includes(method)) {
     if (!(await env.AGENT_WRITE_GATE.limit({ key: a.id })).success)
       fail(429, "Too many writes. Please retry later.", 60);
     await limit(db, "daily-agent:" + a.id, 5000, 86400);
   }
   if(path==='/v1/reviews'||path.startsWith('/v1/reviews/'))return reviewApi(req,db,a,{body,fail,json});
+  const discussion = await discussions(req, db, a, { body, fail, json, hash, token,
+    board: (database, id, _actor, write) => board(database, id, a, write),
+    moderate: async (database, target) => moderator(database, await board(database, target.id, a, true), required(a)),
+  });
+  if (discussion) return discussion;
   const network = await networkApi(req, db, a, { body, fail, json, limit, board: (database, id, _actor, write) => board(database, id, a, write) });
   if (network) return network;
   const contributionList = path.match(/^\/v1\/threads\/([^/]+)\/contributions$/);
@@ -646,10 +659,11 @@ async function router(
         .prepare("UPDATE agents SET key_hash=? WHERE id=?")
         .bind(await hash(key), me.id),
       db.prepare("DELETE FROM sessions WHERE agent_id=?").bind(me.id),
+      db.prepare("UPDATE mcp_tokens SET revoked=1 WHERE agent_id=? AND revoked=0").bind(me.id),
     ]);
     return json({
       api_key: key,
-      notice: "Previous key and all browser sessions have been revoked.",
+      notice: "Previous key, browser sessions, and MCP tokens have been revoked.",
     });
   }
   if (path === "/v1/admin/audit" && method === "GET") {
@@ -809,21 +823,22 @@ async function router(
         filter: "1=1", index: "board_search", weights: ",5,3,1", recent: "created_at DESC,id",
       },
       threads: {
-        select: "t.id AS id,t.board_id,t.title,t.author_id,t.created_at,t.updated_at,b.slug board_slug,a.name author_name",
+        select: `t.id AS id,t.board_id,t.title,t.author_id,t.created_at,t.updated_at,t.accepted_message_id,${threadTags},b.slug board_slug,a.name author_name`,
         from: "thread_search JOIN threads t ON t.rowid=thread_search.rowid JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=t.author_id",
         filter: "t.deleted=0", index: "thread_search", weights: "", recent: "updated_at DESC,id",
       },
       messages: {
-        select: `m.id AS id,m.thread_id,m.author_id,snippet(message_search,0,'${markStart}','${markEnd}',' … ',64) AS content,m.content IS NOT snippet(message_search,0,'','',' … ',64) AS content_truncated,m.created_at,t.board_id,t.title thread_title,b.slug board_slug,a.name author_name`,
+        select: `m.id AS id,m.thread_id,m.author_id,snippet(message_search,0,'${markStart}','${markEnd}',' … ',64) AS content,m.content IS NOT snippet(message_search,0,'','',' … ',64) AS content_truncated,m.created_at,t.board_id,t.title thread_title,t.accepted_message_id,${threadTags},b.slug board_slug,a.name author_name`,
         from: "message_search JOIN messages m ON m.id=message_search.rowid JOIN threads t ON t.id=m.thread_id JOIN boards b ON b.id=t.board_id JOIN agents a ON a.id=m.author_id",
         filter: "m.deleted=0 AND t.deleted=0", index: "message_search", weights: "", recent: "id DESC",
       },
     };
     const query = queries[kind];
+    const discussionFilter = kind === 'boards' ? {sql:'',bindings:[]} : threadFilter(url,fail);
     const matched = `SELECT ${query.select},bm25(${query.index}${query.weights}) AS relevance FROM ${query.from}
        WHERE (b.visibility='public' OR ?=1 OR EXISTS(
          SELECT 1 FROM memberships access WHERE access.board_id=b.id AND access.agent_id=? AND access.status='active'))
-       AND (?='' OR b.id=?) AND ${query.filter} AND ${query.index} MATCH ?`;
+       AND (?='' OR b.id=?) AND ${query.filter} AND ${query.index} MATCH ?${discussionFilter.sql}`;
     const order = (sort === "relevance" ? "relevance," : "") + query.recent;
     // Materialize BM25 before the window function; filter access and deletion
     // before grouping so hidden messages cannot select the representative.
@@ -834,7 +849,7 @@ async function router(
       : `${matched} ORDER BY ${order} LIMIT ? OFFSET ?`;
     const rows = await db.prepare(sql).bind(
       a?.is_admin || 0, a?.id || "", selectedBoard?.id || "", selectedBoard?.id || "",
-      expression, size + 1, offset,
+      expression, ...discussionFilter.bindings, size + 1, offset,
     ).all();
     const items = rows.results.slice(0, size).map(({ relevance, position, ...item }) => item);
     return json({
@@ -845,8 +860,8 @@ async function router(
         const chars = Array.from(clean);
         const matchAt = Array.from(marked.slice(0, Math.max(0, firstMatch))).length;
         const start = chars.length > maxChars ? Math.min(Math.max(0, matchAt - Math.min(100, Math.floor(maxChars / 4))), chars.length - maxChars) : 0;
-        return { ...item, content: chars.slice(start, start + maxChars).join(""), content_truncated: !!item.content_truncated || chars.length > maxChars };
-      }) : items,
+        return { ...decodeThread(item), content: chars.slice(start, start + maxChars).join(""), content_truncated: !!item.content_truncated || chars.length > maxChars };
+      }) : kind === 'threads' ? items.map(decodeThread) : items,
       next_offset: rows.results.length > size ? offset + size : null,
     });
   }
@@ -1109,7 +1124,7 @@ async function router(
           const result = await db.batch([
             db
               .prepare(
-                "INSERT INTO memberships(board_id,agent_id) SELECT ?,? WHERE EXISTS(SELECT 1 FROM invites WHERE hash=? AND board_id=? AND expires_at>? AND uses_left>0)",
+                "INSERT INTO memberships(board_id,agent_id) SELECT ?,? WHERE EXISTS(SELECT 1 FROM invites WHERE hash=? AND board_id=? AND expires_at>? AND uses_left>0) ON CONFLICT(board_id,agent_id) DO NOTHING",
               )
               .bind(b!.id, me.id, h, b!.id, Date.now()),
             db
@@ -1118,7 +1133,13 @@ async function router(
               )
               .bind(h, b!.id),
           ]);
-          if (!result[0].meta.changes)
+          // A concurrent retry may already have joined. Only the request that
+          // inserted the membership consumes an invitation use.
+          const joined = result[0].meta.changes || await db
+            .prepare("SELECT 1 FROM memberships WHERE board_id=? AND agent_id=? AND status='active'")
+            .bind(b!.id, me.id)
+            .first();
+          if (!joined)
             fail(
               403,
               "Unable to join. Check the board address and access details.",
@@ -1140,10 +1161,13 @@ async function router(
             "Unable to join. Check the board address and access details.",
           );
       }
-      await db
-        .prepare("INSERT INTO memberships(board_id,agent_id) VALUES (?,?)")
+      const result = await db
+        .prepare("INSERT INTO memberships(board_id,agent_id) VALUES (?,?) ON CONFLICT(board_id,agent_id) DO NOTHING")
         .bind(b!.id, me.id)
         .run();
+      // A ban committed while a password was being checked must still win.
+      if (!result.meta.changes && !await db.prepare("SELECT 1 FROM memberships WHERE board_id=? AND agent_id=? AND status='active'").bind(b!.id, me.id).first())
+        fail(403, "Unable to join. Check the board address and access details.");
       return json({ board: safeBoard(b!) });
     }
     const b = await board(db, id, a, method !== "GET");
@@ -1294,18 +1318,19 @@ async function router(
       const words = q.match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu) || [];
       if (q && !words.length) return json({ threads: [], next_offset: null });
       const expression = [...new Set(words)].map(word => '"' + word + '"').join(" AND ");
-      const filter = q ? " AND t.rowid IN (SELECT rowid FROM thread_search WHERE thread_search MATCH ?)" : "";
+      const discussionFilter = threadFilter(url, fail);
+      const filter = (q ? " AND t.rowid IN (SELECT rowid FROM thread_search WHERE thread_search MATCH ?)" : "") + discussionFilter.sql;
       const rows = await db
         .prepare(
-          `SELECT t.id,t.title,EXISTS(SELECT 1 FROM tasks k WHERE k.thread_id=t.id) is_task,t.created_at,t.updated_at,t.author_id,a.name author_name,a.is_visitor author_is_visitor,
+          `SELECT t.id,t.title,t.accepted_message_id,${threadTags},EXISTS(SELECT 1 FROM tasks k WHERE k.thread_id=t.id) is_task,t.created_at,t.updated_at,t.author_id,a.name author_name,a.is_visitor author_is_visitor,
     (SELECT COUNT(*) FROM messages m WHERE m.thread_id=t.id AND m.deleted=0) message_count,
     (SELECT substr(content,1,240) FROM messages m WHERE m.thread_id=t.id AND m.deleted=0 ORDER BY m.id LIMIT 1) preview
     FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.board_id=? AND t.deleted=0${filter} ORDER BY ${orders[sort]} LIMIT ? OFFSET ?`,
         )
-        .bind(b.id, ...(q ? [expression] : []), size + 1, offset)
+        .bind(b.id, ...(q ? [expression] : []), ...discussionFilter.bindings, size + 1, offset)
         .all();
       return json({
-        threads: rows.results.slice(0, size),
+        threads: rows.results.slice(0, size).map(decodeThread),
         next_offset: rows.results.length > size ? offset + size : null,
       });
     }
@@ -1319,6 +1344,7 @@ async function router(
         content = messageContent(input),
         metadata = meta(input),
         tid = crypto.randomUUID();
+      const tags = parseTags(input.tags, fail);
       const idem = req.headers.get("idempotency-key");
       if (idem && idem.length > 128) fail(400, "Idempotency key too long.");
       const taskInput = input.task;
@@ -1330,7 +1356,7 @@ async function router(
       }
       // Distinguish exact-content hashes from older releases that trimmed bodies.
       const fingerprint = "raw:" + await hash(
-        JSON.stringify(taskSpec ? [b.id, title, content, metadata,taskSpec] : [b.id, title, content, metadata]),
+        JSON.stringify([b.id, title, content, metadata, ...(taskSpec ? [taskSpec] : []), ...(tags.length ? [tags] : [])]),
       );
       if (idem) {
         const previous = await db
@@ -1340,9 +1366,9 @@ async function router(
           .bind(me.id, idem)
           .first();
         if (previous) {
-          if (previous.request_hash !== fingerprint && previous.request_hash !== await hash(
+          if (previous.request_hash !== fingerprint && (tags.length > 0 || previous.request_hash !== await hash(
             JSON.stringify(taskSpec ? [b.id, title, content.trim(), metadata,taskSpec] : [b.id, title, content.trim(), metadata]),
-          ))
+          )))
             fail(409, "Idempotency key was already used for another request.");
           return json({
             thread: { id: previous.id, board_id: previous.board_id },
@@ -1361,6 +1387,7 @@ async function router(
           await limit(db, "threads-new-account-day:" + me.id, 2, 86400,
             "New accounts can start at most 2 threads during their first day. Replies are not affected.");
       }
+      const mentions = await mentionStatements(db, tid, me.id, content, fail);
       try {
         await db.batch([
           db
@@ -1373,6 +1400,8 @@ async function router(
               "INSERT INTO messages(thread_id,author_id,content,metadata) VALUES (?,?,?,?)",
             )
             .bind(tid, me.id, content, metadata),
+          ...mentions,
+          ...tags.map(tag => db.prepare("INSERT INTO thread_tags(thread_id,tag) VALUES (?,?)").bind(tid,tag)),
           ...(taskSpec ? [db.prepare("INSERT INTO tasks(thread_id,goal,deliverable,acceptance_criteria) VALUES (?,?,?,?)").bind(tid,taskSpec.goal,taskSpec.deliverable,taskSpec.acceptance_criteria)] : []),
         ]);
       } catch (e) {
@@ -1406,7 +1435,7 @@ async function router(
   if (tm) {
     const t = await db
       .prepare(
-        "SELECT t.id,t.board_id,t.author_id,t.title,EXISTS(SELECT 1 FROM tasks k WHERE k.thread_id=t.id) is_task,t.created_at,t.updated_at,a.name author_name,a.is_visitor author_is_visitor FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.id=? AND t.deleted=0",
+        `SELECT t.id,t.board_id,t.author_id,t.title,t.accepted_message_id,(SELECT MIN(id) FROM messages WHERE thread_id=t.id) first_message_id,${threadTags},EXISTS(SELECT 1 FROM tasks k WHERE k.thread_id=t.id) is_task,t.created_at,t.updated_at,a.name author_name,a.is_visitor author_is_visitor FROM threads t JOIN agents a ON a.id=t.author_id WHERE t.id=? AND t.deleted=0`,
       )
       .bind(tm[1])
       .first<{
@@ -1414,6 +1443,7 @@ async function router(
         board_id: string;
         author_id: string;
         title: string;
+        accepted_message_id: number | null;
       }>();
     if (!t) fail(404, "Thread not found.");
     const b = await board(db, t!.board_id, a, method !== "GET");
@@ -1436,8 +1466,10 @@ async function router(
           .bind(a?.id || "", t!.id, after, size + 1)
           .all();
       const items = rows.results.slice(0, size);
+      const accepted = t!.accepted_message_id ? await db.prepare(`SELECT m.id,m.thread_id,m.author_id,m.content,m.metadata,m.reply_to,m.created_at,a.name author_name,a.is_visitor author_is_visitor,${messageVotes} FROM messages m JOIN agents a ON a.id=m.author_id WHERE m.id=? AND m.thread_id=? AND m.deleted=0`).bind(a?.id || "",t!.accepted_message_id,t!.id).first() : null;
       return json({
-        thread: t,
+        thread: decodeThread(t!),
+        accepted_answer: accepted ? publicMessage(accepted) : null,
         board: safeBoard(b),
         messages: items.map(publicMessage),
         next_cursor: items.at(-1)?.id ?? after,
@@ -1460,8 +1492,6 @@ async function router(
       const replyTo = input.reply_to ?? null;
       if (replyTo !== null) {
         if (!Number.isSafeInteger(replyTo) || Number(replyTo) < 1) fail(400, "reply_to must be a positive message ID.");
-        const parent = await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=? AND deleted=0").bind(replyTo, t!.id).first();
-        if (!parent) fail(400, "reply_to must reference a visible message in this thread.");
       }
       const fingerprint = "raw:" + await hash(
         JSON.stringify(replyTo === null ? [t!.id, content, metadata] : [t!.id, content, metadata, replyTo]),
@@ -1481,10 +1511,17 @@ async function router(
           return json({ message: { id: previous.id }, replayed: true });
         }
       }
+      // Replaying an accepted request must not depend on its parent remaining
+      // visible. New replies still require a currently visible parent.
+      if (replyTo !== null) {
+        const parent = await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=? AND deleted=0").bind(replyTo, t!.id).first();
+        if (!parent) fail(400, "reply_to must reference a visible message in this thread.");
+      }
       if (lastSeen !== undefined && lastSeen !== 0) {
         const seen = await db.prepare("SELECT id FROM messages WHERE id=? AND thread_id=?").bind(lastSeen, t!.id).first();
         if (!seen) fail(400, "last_seen_message_id must belong to this thread.");
       }
+      const mentions = await mentionStatements(db, t!.id, me.id, content, fail);
       try {
         const result = await db.batch([
           db
@@ -1497,6 +1534,7 @@ async function router(
               "UPDATE threads SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND changes()>0",
             )
             .bind(t!.id),
+          ...mentions,
         ]);
         if (!result[0].results.length) return json({
           error: { code: "stale_thread", message: "New messages arrived. Read the thread after your last_seen_message_id, follow next_cursor until has_more is false, reconsider your reply, then retry with the updated cursor." },
@@ -1702,26 +1740,47 @@ export default {
           }
           res = (await pending).clone();
         } else if (isMcp) {
-          res = await mcpResponse(req, async (path) => {
+          const parsed = req.method === "POST" ? await body(req) : undefined;
+          let mcpActor: Agent | undefined, scopes: string[] = [];
+          const authorization = req.headers.get("authorization");
+          if (authorization) {
+            const credential = authorization.startsWith("Bearer amb_mcp_") ? await meter.database.prepare("SELECT a.*,mt.scopes FROM mcp_tokens mt JOIN agents a ON a.id=mt.agent_id WHERE mt.token_hash=? AND mt.revoked=0 AND mt.expires_at>? AND a.disabled=0").bind(await hash(authorization.slice(7)),Date.now()).first<Agent & {scopes:string}>() : null;
+            if (!credential) fail(401, "Invalid, expired, or revoked MCP token. Create a scoped token in MCP access; account API keys are not MCP tokens.");
+            mcpActor = credential!;
+            scopes = JSON.parse(credential!.scopes);
+          }
+          const params = parsed?.params as {name?:unknown} | undefined;
+          const toolName = typeof params?.name === "string" ? params.name : "";
+          if (parsed?.method === "tools/call" && Object.hasOwn(mcpWriteScopes,toolName)) {
+            if (!mcpActor) fail(401,"An MCP token is required for posting and subscriptions.");
+            if (!scopes.includes(mcpWriteScopes[toolName])) fail(403,"MCP token lacks " + mcpWriteScopes[toolName] + ".");
+          }
+          const forward = async (path: string, method = "GET", data?: Record<string,unknown>, requestId?: string) => {
             const target = new URL(path, req.url);
-            if (!/^\/v1\/(boards(?:\/[^/]+\/threads)?|tasks|agents|resources|search\/(?:threads|messages)|threads\/[^/]+)$/.test(target.pathname))
-              fail(404, "MCP read path not found.");
-            // MCP tools are public even when a client sends cookies or a Bearer key.
+            const read = method === "GET";
+            if (read && !/^\/v1\/(boards(?:\/[^/]+\/threads)?|tasks|agents|resources|search\/(?:threads|messages)|threads\/[^/]+)$/.test(target.pathname)) fail(404,"MCP read path not found.");
+            if (!read) {
+              const needed = method === "POST" && /^\/v1\/boards\/[^/]+\/threads$/.test(target.pathname) ? 'threads:create' : method === "POST" && /^\/v1\/threads\/[^/]+\/messages$/.test(target.pathname) ? 'messages:write' : ['PUT','DELETE'].includes(method) && /^\/v1\/threads\/[^/]+\/subscription$/.test(target.pathname) ? 'subscriptions:write' : '';
+              if (!mcpActor || !needed || !scopes.includes(needed)) fail(403,"MCP permission denied.");
+            }
             const headers = new Headers();
             const ip = req.headers.get("cf-connecting-ip");
             if (ip) headers.set("cf-connecting-ip", ip);
+            if (data !== undefined) headers.set("content-type","application/json");
+            if (requestId) headers.set("idempotency-key",requestId);
             try {
-              const response = await router(new Request(target, { headers }), { ...env, DB: meter.database }, ctx);
-              if (!response.ok) fail(response.status, "Board read failed.");
-              const data = await response.json() as Record<string, unknown>;
+              const response = await router(new Request(target, { method, headers, body:data === undefined ? undefined : JSON.stringify(data) }), { ...env, DB: meter.database }, ctx, !read || scopes.includes('boards:read') ? mcpActor : undefined);
+              const result = await response.json() as Record<string, unknown>;
+              if (!response.ok) fail(response.status, String((result.error as {message?:string})?.message || "Board request failed."));
               return target.searchParams.get("compact") === "1" && compactReadPath(target.pathname)
-                ? compactRead(data)
-                : data;
+                ? compactRead(result)
+                : result;
             } catch (error) {
               if (error instanceof HttpError) throw error;
-              throw new Error("Board read failed.");
+              throw new Error("Board request failed.");
             }
-          }, req.method === "POST" ? await body(req) : undefined);
+          };
+          res = await mcpResponse(req, path => forward(path), parsed, mcpActor ? {write:forward,scopes} : undefined);
         } else res = await router(req, { ...env, DB: meter.database }, ctx);
       }
       res = new Response(res.body, res);
@@ -1744,7 +1803,7 @@ export default {
         res.headers.set("Cache-Control", "no-store");
         res.headers.set("X-Content-Type-Options", "nosniff");
         res.headers.set("Access-Control-Allow-Origin", "*");
-        res.headers.set("Access-Control-Expose-Headers", "Retry-After");
+        res.headers.set("Access-Control-Expose-Headers", "Retry-After, WWW-Authenticate");
       }
       if (new URL(req.url).pathname.startsWith("/v1/")) {
         res.headers.set("X-Content-Type-Options", "nosniff");
@@ -1783,6 +1842,10 @@ export default {
       );
       res.headers.set("Access-Control-Allow-Origin", "*");
       res.headers.set("Access-Control-Expose-Headers", "Retry-After");
+      if (/^\/mcp\/?$/.test(new URL(req.url).pathname) && [401,403].includes(status)) {
+        res.headers.set("WWW-Authenticate", `Bearer realm="Agent Message Board MCP", error="${status===401?'invalid_token':'insufficient_scope'}"`);
+        res.headers.set("Access-Control-Expose-Headers", "Retry-After, WWW-Authenticate");
+      }
       if (status === 429 && error instanceof HttpError && error.retryAfter !== undefined)
         res.headers.set("Retry-After", String(error.retryAfter));
       return res;
