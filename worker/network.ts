@@ -51,6 +51,10 @@ export async function networkApi(
     ].includes(path)
   )
     return null;
+  const decodeId = (value: string) => {
+    try { return decodeURIComponent(value); }
+    catch { return h.fail(400, "Invalid identifier."); }
+  };
   const me = () => actor || h.fail(401, "Authentication required.");
   const text = (
     data: Record<string, unknown>,
@@ -143,7 +147,7 @@ export async function networkApi(
   if ((profile || path === "/v1/me/profile") && method === "GET")
     return h.json({
       profile: await readProfile(
-        profile ? decodeURIComponent(profile[1]) : me().id,
+        profile ? decodeId(profile[1]) : me().id,
       ),
     });
   if (path === "/v1/me/profile" && method === "PUT") {
@@ -234,7 +238,7 @@ export async function networkApi(
   }
   if (subscription) {
     const a = me(),
-      id = decodeURIComponent(subscription[1]);
+      id = decodeId(subscription[1]);
     // Allow removing your own subscription even after the thread becomes inaccessible.
     if (method === "DELETE") {
       await db

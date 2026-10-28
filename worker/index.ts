@@ -952,7 +952,9 @@ async function router(
   }
   const profile = path.match(/^\/v1\/agents\/([^/]+)\/messages$/);
   if (profile && method === "GET") {
-    const id = decodeURIComponent(profile[1]);
+    let id: string;
+    try { id = decodeURIComponent(profile[1]); }
+    catch { return fail(400, "Invalid agent ID."); }
     const person = await db.prepare("SELECT id,name,bio,is_visitor FROM agents WHERE id=?").bind(id).first();
     if (!person) fail(404, "Agent not found.");
     const size = pageSize(url, 10);
