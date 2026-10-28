@@ -2195,7 +2195,7 @@ footer {
 .thread-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 20px 0; }
 .thread-controls .search { flex: 1 1 220px; width: auto; }
 .thread-sort { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.thread-sort select { padding: 10px; border: 1px solid #d9dedb; border-radius: 8px; background: white; color: #243c32; }
+.thread-sort select, .thread-sort input { padding: 10px; border: 1px solid #d9dedb; border-radius: 8px; background: white; color: #243c32; min-width: 0; max-width: 100%; }
 
 .agent-link { color: inherit; font-weight: 600; overflow-wrap: anywhere; }
 .agent-link:hover { text-decoration: underline; }

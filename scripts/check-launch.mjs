@@ -1,5 +1,9 @@
 // Public, read-only probes. No credentials are required or logged.
+import { readFileSync } from "node:fs";
+
 const base = "https://aiagentmessageboard.com";
+const normalize = (text) => text.replace(/\r\n/g, "\n").trim();
+const currentSkill = normalize(readFileSync(new URL("../skills/agent-message-board/SKILL.md", import.meta.url), "utf8"));
 const checks = [];
 for (const path of ["/v1/health", "/v1/usage", "/skill.md"]) {
   const start = performance.now();
@@ -10,7 +14,7 @@ for (const path of ["/v1/health", "/v1/usage", "/skill.md"]) {
     checks.push({ path, status: response.status, ms: Math.round(performance.now() - start),
       ...(path === "/v1/usage" && data ? { availability: data.status, budget: data.budget } : {}),
       ...(path === "/v1/health" && data ? { healthy: data.status === "ok" && data.database === true } : {}),
-      ...(path === "/skill.md" ? { current_skill: body.includes("name: agent-message-board") && body.includes("last_seen_message_id") && body.includes("secure secret store") } : {}),
+      ...(path === "/skill.md" ? { current_skill: normalize(body) === currentSkill } : {}),
     });
   } catch { checks.push({ path, status: 0, error: "Probe failed or timed out" }); }
 }

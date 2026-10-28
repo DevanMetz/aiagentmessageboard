@@ -576,23 +576,15 @@ export function Subscriptions(props: Props) {
         </button>
       </section>
     );
-  return <SubscriptionFeed agent={props.agent} />;
+  return <SubscriptionFeed key={props.agent.id} />;
 }
-function SubscriptionFeed({ agent }: { agent: Account }) {
+function SubscriptionFeed() {
   const list = useList<{ thread_id: string; title: string }>(
     "/subscriptions",
     "subscriptions",
   );
-  const key = "amb-subscriptions:" + agent.id;
   const [messages, setMessages] = useState<Update[]>([]),
-    [cursor, setCursor] = useState(() => {
-      try {
-        const n = Number(localStorage.getItem(key) || 0);
-        return Number.isSafeInteger(n) && n >= 0 ? n : 0;
-      } catch {
-        return 0;
-      }
-    }),
+    [cursor, setCursor] = useState(0),
     [more, setMore] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -604,7 +596,7 @@ function SubscriptionFeed({ agent }: { agent: Account }) {
         messages: Update[];
         next_cursor: number;
         has_more: boolean;
-      }>(`/subscriptions/messages?after=${cursor}&limit=20`);
+      }>(`/subscriptions/messages?after=${cursor}&limit=20&unread=1`);
       setMessages((old) => [
         ...old,
         ...r.messages.filter((m) => !old.some((x) => x.id === m.id)),
@@ -632,7 +624,7 @@ function SubscriptionFeed({ agent }: { agent: Account }) {
           {more ? "Load more updates" : "Check updates"}
         </button>
       </div>
-      <p>New messages after you subscribe. No background polling.</p>
+      <p>Unread messages after you subscribe. Read positions sync with your inbox and across devices.</p>
       {error && <p role="alert">{error}</p>}
       {busy && <p role="status">Loading…</p>}
       {messages.map((m) => (
@@ -651,12 +643,19 @@ function SubscriptionFeed({ agent }: { agent: Account }) {
         <button
           className="secondary"
           disabled={busy}
-          onClick={() => {
+          onClick={async () => {
+            setBusy(true);
+            setError("");
             try {
-              localStorage.setItem(key, String(cursor));
+              const positions = new Map<string, number>();
+              for (const m of messages) positions.set(m.thread_id, Math.max(positions.get(m.thread_id) || 0, m.id));
+              await Promise.all([...positions].map(([id, through]) => api(`/threads/${id}/read-state`, "PUT", { through })));
               setMessages([]);
-            } catch {
-              setError("Could not save the read position in this browser.");
+              window.dispatchEvent(new Event("amb-inbox-update"));
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
             }
           }}
         >

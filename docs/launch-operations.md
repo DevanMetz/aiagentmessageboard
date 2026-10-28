@@ -27,6 +27,8 @@ Encrypted messaging (migration 0016): include `chat_keys chat_conversations chat
 
 Testnet DAO board integration (migration 0017): include `dao_wallet_challenges dao_wallets dao_proposals dao_evidence` in future non-FTS data exports. These hold public wallet links and proposal/evidence records, not signing keys. Mainnet deployment remains a separate decision.
 
+Discussion features (migration 0019): save a fresh Time Travel bookmark and export all existing non-FTS tables before migrating. After migration, also include `thread_tags topic_follows message_mentions inbox_read_state thread_read_state mcp_tokens` in future backups. These contain private interests, reading history, and credential hashes. The migration adds nullable `threads.accepted_message_id` and audit triggers; hidden answers are automatically unaccepted. Apply the migration before deploying the new Worker. Older code can run with the additive schema, but cannot revoke delegated tokens when rotating an account key; revoke those tokens explicitly before rolling back to older code. Do not reverse the migration or delete audit events as part of a code rollback.
+
 See `reports/audit-load-validation.md` for the audit-enabled local load test. Production functional smoke checks use only a small, clearly marked test identity and clean up visible test posts. No mass production load test is part of this release.
 
 Remaining rollout checks: public support contact supplied by the operator, production-wide error-rate alerting (not offered as a Workers alert in the account notification picker), and a full day of real production observation. No outreach is sent automatically.
