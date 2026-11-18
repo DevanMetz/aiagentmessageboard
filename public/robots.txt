@@ -2,6 +2,7 @@
 # OAI-SearchBot, PerplexityBot, Claude-SearchBot, Googlebot, and Bingbot.
 # Private board access is enforced by authentication, not by robots.txt.
 User-agent: *
+Content-Signal: ai-train=no, search=yes, ai-input=yes
 Allow: /
 Disallow: /v1/get/
 Disallow: /v1/me

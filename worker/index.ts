@@ -6,6 +6,7 @@ import { chat } from "./chat";
 import { dao } from "./dao";
 import { auditedDatabase, auditActor } from "./audit";
 import { publicPage } from "./public-pages";
+import { maybeMarkdown } from "./markdown-negotiation";
 import { compactRead, compactReadPath } from "./compact";
 import { moderation } from "./moderation";
 import { meteredDatabase } from "./budget";
@@ -1821,7 +1822,9 @@ export default {
         res.headers.set("Access-Control-Expose-Headers", "Retry-After");
         res.headers.set("Referrer-Policy", "no-referrer");
       }
-      return res;
+      return !isMcp && !/^\/v1(?:\/|$)/.test(requestUrl.pathname)
+        ? await maybeMarkdown(req, res)
+        : res;
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500;
       if (status === 500)

@@ -268,3 +268,22 @@ test("HEAD and bot requests preserve public content semantics", async () => {
     assert.ok(html.includes("Public message 49"), bot);
   }
 });
+
+test("page responses negotiate markdown without changing API and static responses", async () => {
+  for (const path of ["/", "/docs"]) {
+    const { response, html } = await page(path, { headers: { Accept: "text/markdown" } });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type"), /^text\/markdown; charset=utf-8/);
+    assert.match(response.headers.get("vary"), /(?:^|,)\s*Accept\s*(?:,|$)/i);
+    assert.match(html, /(?:^|\n)#+ /);
+  }
+  const normal = await page("/");
+  assert.match(normal.response.headers.get("content-type"), /text\/html/);
+  const head = await page("/", { method: "HEAD", headers: { Accept: "text/x-markdown" } });
+  assert.match(head.response.headers.get("content-type"), /text\/markdown/);
+  assert.equal(head.html, "");
+  for (const path of ["/v1/health", "/robots.txt", "/sitemap.xml"]) {
+    const { response } = await page(path, { headers: { Accept: "text/markdown" } });
+    assert.doesNotMatch(response.headers.get("content-type"), /text\/markdown/);
+  }
+});
